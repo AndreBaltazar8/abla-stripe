@@ -1,0 +1,471 @@
+import "abla/http"
+import "abla/http/tls"
+import "abla/json"
+import "abla/process/time"
+import "abla/sys/linux"
+import "form.ab"
+
+fun stripeDefaultApiVersion(): string = "2026-07-29.dahlia"
+fun stripePackageVersion(): string = "0.1.0"
+
+fun stripeClientInformation(): string = #$jsons {
+    "lang": "abla",
+    "publisher": "community",
+    "bindings_version": "0.1.0",
+    "lang_version": "0.1"
+}
+
+fun stripeClientInformationForApp(appInfo: StripeAppInfo): string {
+    if (appInfo.name == "") return stripeClientInformation()
+    jsonStringify(jsonObject(
+        ["lang", "publisher", "bindings_version", "lang_version", "application"],
+        [
+            jsonString("abla"), jsonString("community"),
+            jsonString(stripePackageVersion()), jsonString("0.1"),
+            jsonObject(
+                ["name", "version", "url"],
+                [jsonString(appInfo.name), jsonString(appInfo.version),
+                 jsonString(appInfo.url)]
+            )
+        ]
+    ))
+}
+
+class StripeAppInfo(val name: string, val version: string, val url: string)
+
+class StripeConfig(
+    val secretKey: string,
+    val apiVersion: string,
+    val timeoutMilliseconds: int,
+    val maximumNetworkRetries: int,
+    val maximumResponseBytes: int,
+    val telemetry: bool,
+    val appInfo: StripeAppInfo,
+    val host: string,
+    val port: int,
+    val testMode: bool
+)
+
+fun stripeConfig(secretKey: string): StripeConfig = StripeConfig(
+    secretKey, stripeDefaultApiVersion(), 30000, 1, 8388608, false,
+    StripeAppInfo("", "", ""), "api.stripe.com", 443, false
+)
+
+fun stripeParseInt(value: string, fallback: int): int {
+    var result = 0
+    var valid = value.size > 0
+    var index = 0
+    while (valid && index < value.size) {
+        val byte = value[index]
+        if (byte < 48 || byte > 57) valid = false
+        else result = result * 10 + byte - 48
+        index = index + 1
+    }
+    if (valid) result else fallback
+}
+
+fun stripeEnvironment(name: string, fallback: string): string {
+    val configured = linuxEnvironment(name)
+    if (configured.found && configured.value != "") configured.value else fallback
+}
+
+fun stripeSecret(name: string, fileName: string): string {
+    val direct = linuxEnvironment(name)
+    var result = ""
+    if (direct.found) result = direct.value
+    else {
+        val file = linuxEnvironment(fileName)
+        if (file.found && file.value != "") {
+            result = linuxReadFile(file.value, 65536)
+            var end = result.size
+            while (end > 0 && (result[end - 1] == 10 || result[end - 1] == 13)) {
+                end = end - 1
+            }
+            result = result.slice(0, end)
+        }
+    }
+    result
+}
+
+fun stripeConfigFromEnvironment(): StripeConfig = StripeConfig(
+    stripeSecret("STRIPE_SECRET_KEY", "STRIPE_SECRET_KEY_FILE"),
+    stripeEnvironment("STRIPE_API_VERSION", stripeDefaultApiVersion()),
+    stripeParseInt(stripeEnvironment("STRIPE_TIMEOUT_MS", "30000"), 30000),
+    stripeParseInt(stripeEnvironment("STRIPE_MAX_NETWORK_RETRIES", "1"), 1),
+    8388608,
+    stripeEnvironment("STRIPE_ENABLE_TELEMETRY", "false") == "true",
+    StripeAppInfo("", "", ""), "api.stripe.com", 443, false
+)
+
+fun stripeHeaderValueValid(value: string, emptyAllowed: bool): bool {
+    var valid = (emptyAllowed || value != "") && value.isValidUtf8()
+    var index = 0
+    while (valid && index < value.size) {
+        if (value[index] <= 31 || value[index] == 127) valid = false
+        index = index + 1
+    }
+    valid
+}
+
+fun StripeConfig.valid(): bool =
+    (this.secretKey.size >= 8 &&
+        (this.secretKey.slice(0, 3) == "sk_" ||
+         this.secretKey.slice(0, 3) == "rk_") &&
+        stripeHeaderValueValid(this.secretKey, false)) &&
+    this.apiVersion.size >= 10 &&
+    stripeHeaderValueValid(this.apiVersion, false) &&
+    stripeHeaderValueValid(this.appInfo.name, true) &&
+    stripeHeaderValueValid(this.appInfo.version, true) &&
+    stripeHeaderValueValid(this.appInfo.url, true) &&
+    this.timeoutMilliseconds > 0 &&
+    this.timeoutMilliseconds <= 600000 && this.maximumNetworkRetries >= 0 &&
+    this.maximumNetworkRetries <= 5 && this.maximumResponseBytes >= 1024 &&
+    this.maximumResponseBytes <= 16777216 &&
+    ((this.host == "api.stripe.com" && this.port == 443 && !this.testMode) ||
+     (this.testMode && this.port > 0 && this.port <= 65535 &&
+      (this.host == "127.0.0.1" || this.host == "localhost" ||
+       this.host == "::1")))
+
+class StripeRequestOptions(
+    val idempotencyKey: string,
+    val stripeAccount: string,
+    val apiVersion: string,
+    val timeoutMilliseconds: int,
+    val maximumNetworkRetries: int
+)
+
+fun stripeRequestOptions(): StripeRequestOptions =
+    StripeRequestOptions("", "", "", 0, -1)
+
+fun stripeIdempotentRequest(idempotencyKey: string): StripeRequestOptions =
+    StripeRequestOptions(idempotencyKey, "", "", 0, -1)
+
+fun stripeIdempotencyKeyValid(value: string): bool {
+    var valid = value.size <= 255
+    var index = 0
+    while (valid && index < value.size) {
+        if (value[index] <= 31 || value[index] == 127) valid = false
+        index = index + 1
+    }
+    valid
+}
+
+fun stripeAccountValid(value: string): bool {
+    var valid = value == "" || (value.size > 5 && value.slice(0, 5) == "acct_")
+    var index = 0
+    while (valid && index < value.size) {
+        if (value[index] <= 32 || value[index] == 127) valid = false
+        index = index + 1
+    }
+    valid
+}
+
+fun StripeRequestOptions.valid(): bool =
+    stripeIdempotencyKeyValid(this.idempotencyKey) &&
+    stripeAccountValid(this.stripeAccount) &&
+    stripeHeaderValueValid(this.apiVersion, true) &&
+    this.timeoutMilliseconds >= 0 && this.timeoutMilliseconds <= 600000 &&
+    this.maximumNetworkRetries >= -1 && this.maximumNetworkRetries <= 5
+
+class StripeError(
+    val kind: string,
+    val message: string,
+    val code: string,
+    val declineCode: string,
+    val parameter: string,
+    val docUrl: string,
+    val paymentIntentId: string,
+    val paymentMethodId: string,
+    val setupIntentId: string,
+    val status: int,
+    val requestId: string,
+    val retryable: bool,
+    val raw: Json
+)
+
+fun stripeErrorEmpty(): StripeError = StripeError(
+    "", "", "", "", "", "", "", "", "", 0, "", false, jsonNull()
+)
+
+class StripeResult(
+    val succeeded: bool,
+    val value: Json,
+    val body: string,
+    val status: int,
+    val requestId: string,
+    val apiVersion: string,
+    val idempotencyKey: string,
+    val retries: int,
+    val rateLimitedReason: string,
+    val error: StripeError
+)
+
+fun stripeFailure(
+    kind: string,
+    message: string,
+    status: int = 0,
+    requestId: string = "",
+    idempotencyKey: string = "",
+    retries: int = 0,
+    retryable: bool = false
+): StripeResult = StripeResult(
+    false, jsonNull(), "", status, requestId, "", idempotencyKey, retries, "",
+    StripeError(kind, message, "", "", "", "", "", "", "", status,
+        requestId, retryable, jsonNull())
+)
+
+fun stripeErrorFromResponse(
+    root: Json,
+    status: int,
+    requestId: string,
+    retryable: bool
+): StripeError {
+    val error = root.get("error")
+    var kind = error.getString("type")
+    if (kind == "") kind = "unknown_error"
+    StripeError(
+        kind, error.getString("message"), error.getString("code"),
+        error.getString("decline_code"), error.getString("param"),
+        error.getString("doc_url"),
+        stripeExpandableId(error.get("payment_intent")),
+        stripeExpandableId(error.get("payment_method")),
+        stripeExpandableId(error.get("setup_intent")), status, requestId,
+        retryable, error
+    )
+}
+
+fun stripePathValid(path: string): bool {
+    var valid = path.size >= 5 && path.slice(0, 4) == "/v1/" &&
+        path.isValidUtf8()
+    var index = 1
+    var segmentBegin = 1
+    while (valid && index < path.size) {
+        val byte = path[index]
+        val allowed = (byte >= 65 && byte <= 90) ||
+            (byte >= 97 && byte <= 122) || (byte >= 48 && byte <= 57) ||
+            byte == 45 || byte == 46 || byte == 47 || byte == 95 || byte == 126
+        if (!allowed) valid = false
+        if (byte == 47) {
+            val segment = path.slice(segmentBegin, index)
+            if (segment == "" || segment == "." || segment == "..") valid = false
+            segmentBegin = index + 1
+        }
+        index = index + 1
+    }
+    val finalSegment = path.slice(segmentBegin, path.size)
+    valid && finalSegment != "" && finalSegment != "." && finalSegment != ".."
+}
+
+fun stripeRetryableStatus(status: int): bool =
+    status == 409 || status == 429 || status == 500 || status == 502 ||
+    status == 503 || status == 504
+
+fun stripeShouldRetry(method: string, idempotencyKey: string,
+                      response: HttpClientResult): bool {
+    val methodSafe = method == "GET" || method == "DELETE" ||
+        (method == "POST" && idempotencyKey != "")
+    if (!methodSafe) return false
+    if (!response.succeeded || !response.complete) return true
+    val explicit = response.response.header("Stripe-Should-Retry")
+    if (httpAsciiEqualInsensitive(explicit, "false")) return false
+    if (httpAsciiEqualInsensitive(explicit, "true")) return true
+    stripeRetryableStatus(response.response.status)
+}
+
+fun stripeRetryDelay(attempt: int, retryAfter: string): int {
+    var delay = stripeParseInt(retryAfter, -1) * 1000
+    if (delay < 0) {
+        delay = 250
+        var index = 0
+        while (index < attempt) {
+            delay = delay * 2
+            index = index + 1
+        }
+        val now = linuxMonotonicMilliseconds()
+        delay = delay + now - now / 101 * 101
+    }
+    if (delay > 5000) delay = 5000
+    delay
+}
+
+class StripeClient(
+    val config: StripeConfig,
+    val transport: (HttpRequest, int, int) -> HttpClientResult,
+    val wait: (int) -> void,
+    var lastRequestId: string,
+    var lastRequestDurationMilliseconds: int
+)
+
+// HTTP transports count headers and body in their read ceiling. Reserve a
+// fixed, bounded header allowance and still enforce the exact body limit after
+// parsing the response envelope.
+fun stripeTransportResponseBytes(maximumBodyBytes: int): int =
+    maximumBodyBytes + 65536
+
+fun stripeClient(config: StripeConfig): StripeClient = StripeClient(
+    config,
+    { request: HttpRequest, maximum: int, timeout: int ->
+        httpsClient(
+            config.host, config.port, stripeTransportResponseBytes(maximum), timeout
+        ).send(request)
+    },
+    { milliseconds: int -> sleep(milliseconds) },
+    "", 0
+)
+
+fun stripeClientWithTransport(
+    config: StripeConfig,
+    transport: (HttpRequest, int, int) -> HttpClientResult,
+    wait: (int) -> void
+): StripeClient = StripeClient(config, transport, wait, "", 0)
+
+// Intentionally named and loopback-only. This exists for protocol fixtures;
+// production callers use stripeClient(), which always uses verified TLS.
+fun stripeLoopbackTestClient(config: StripeConfig): StripeClient = StripeClient(
+    config,
+    { request: HttpRequest, maximum: int, timeout: int ->
+        if (config.testMode && config.host == "127.0.0.1") {
+            httpIpv4Client(
+                "127.0.0.1:${config.port}", "127.0.0.1", config.port,
+                stripeTransportResponseBytes(maximum), timeout
+            ).send(request)
+        } else HttpClientResult(HttpResponse(0, [], ""), false, false)
+    },
+    { milliseconds: int -> sleep(milliseconds) },
+    "", 0
+)
+
+fun stripeTelemetry(requestId: string, durationMilliseconds: int): string =
+    jsonStringify(jsonObject(
+        ["last_request_metrics"],
+        [jsonObject(
+            ["request_id", "request_duration_ms"],
+            [jsonString(requestId), jsonInteger(durationMilliseconds)]
+        )]
+    ))
+
+fun StripeClient.rawRequest(
+    method: string,
+    path: string,
+    params: StripeParams,
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeResult {
+    if (!this.config.valid()) return stripeFailure(
+        "configuration_error", "Invalid Stripe client configuration."
+    )
+    if (method != "GET" && method != "POST" && method != "DELETE") {
+        return stripeFailure("configuration_error", "Unsupported Stripe HTTP method.")
+    }
+    if (!stripePathValid(path)) return stripeFailure(
+        "configuration_error", "Invalid Stripe API v1 path."
+    )
+    if (!params.valid) return stripeFailure(
+        "configuration_error", "Stripe parameters contain an invalid field name."
+    )
+    if (!options.valid()) return stripeFailure(
+        "configuration_error", "Invalid Stripe request options."
+    )
+
+    val apiVersion = if (options.apiVersion != "") options.apiVersion
+        else this.config.apiVersion
+    val timeout = if (options.timeoutMilliseconds > 0)
+        options.timeoutMilliseconds else this.config.timeoutMilliseconds
+    val maximumRetries = if (options.maximumNetworkRetries >= 0)
+        options.maximumNetworkRetries else this.config.maximumNetworkRetries
+    val encoded = params.encode()
+    var target = path
+    var body = ""
+    if ((method == "GET" || method == "DELETE") && encoded != "") {
+        target = "$target?$encoded"
+    } else if (method == "POST") body = encoded
+
+    val headers: array<HttpHeader> = [
+        HttpHeader("Authorization", "Bearer ${this.config.secretKey}"),
+        HttpHeader("Stripe-Version", apiVersion),
+        HttpHeader("User-Agent", "abla-stripe/${stripePackageVersion()}"),
+        HttpHeader(
+            "X-Stripe-Client-User-Agent",
+            stripeClientInformationForApp(this.config.appInfo)
+        )
+    ]
+    if (method == "POST") headers.append(
+        HttpHeader("Content-Type", "application/x-www-form-urlencoded")
+    )
+    if (options.idempotencyKey != "") headers.append(
+        HttpHeader("Idempotency-Key", options.idempotencyKey)
+    )
+    if (options.stripeAccount != "") headers.append(
+        HttpHeader("Stripe-Account", options.stripeAccount)
+    )
+    if (this.config.appInfo.name != "") headers.append(HttpHeader(
+        "X-Abla-Stripe-App",
+        "${this.config.appInfo.name}/${this.config.appInfo.version}"
+    ))
+    if (this.config.telemetry && this.lastRequestId != "") headers.append(
+        HttpHeader("X-Stripe-Client-Telemetry", stripeTelemetry(
+            this.lastRequestId, this.lastRequestDurationMilliseconds
+        ))
+    )
+
+    val request = httpRequest(method, target, body, headers)
+    val exchange = this.transport
+    val pause = this.wait
+    val started = linuxMonotonicMilliseconds()
+    var response = exchange(request, this.config.maximumResponseBytes, timeout)
+    var retries = 0
+    var retrying = stripeShouldRetry(method, options.idempotencyKey, response)
+    while (retrying && retries < maximumRetries) {
+        pause(stripeRetryDelay(retries, response.response.header("Retry-After")))
+        retries = retries + 1
+        response = exchange(request, this.config.maximumResponseBytes, timeout)
+        retrying = stripeShouldRetry(method, options.idempotencyKey, response)
+    }
+    val completedRequestId = response.response.header("Request-Id")
+    if (this.config.telemetry && response.succeeded && response.complete &&
+        completedRequestId != "") {
+        this.lastRequestId = completedRequestId
+        val elapsed = linuxMonotonicMilliseconds() - started
+        this.lastRequestDurationMilliseconds = if (elapsed >= 0) elapsed else 0
+    }
+    if (!response.succeeded || !response.complete) return stripeFailure(
+        "network_error", "Stripe request did not return a complete response.",
+        0, "", options.idempotencyKey, retries, retrying
+    )
+
+    val status = response.response.status
+    val requestId = completedRequestId
+    val responseVersion = response.response.header("Stripe-Version")
+    val rateReason = response.response.header("Stripe-Rate-Limited-Reason")
+    if (response.response.body.size > this.config.maximumResponseBytes) {
+        return StripeResult(
+            false, jsonNull(), "", status, requestId, responseVersion,
+            options.idempotencyKey, retries, rateReason,
+            StripeError(
+                "parse_error", "Stripe response exceeds the configured body limit.",
+                "", "", "", "", "", "", "", status, requestId, false,
+                jsonNull()
+            )
+        )
+    }
+    val parsed = jsonParse(response.response.body, JsonLimits(
+        this.config.maximumResponseBytes, 96, 250000,
+        this.config.maximumResponseBytes, 50000, true
+    ))
+    if (!parsed.succeeded) return StripeResult(
+        false, jsonNull(), response.response.body, status, requestId,
+        responseVersion, options.idempotencyKey, retries, rateReason,
+        StripeError("parse_error", "Stripe returned invalid JSON.", "", "", "",
+            "", "", "", "", status, requestId, false, jsonNull())
+    )
+    if (status >= 200 && status < 300) return StripeResult(
+        true, parsed.value, response.response.body, status, requestId,
+        responseVersion, options.idempotencyKey, retries, rateReason,
+        stripeErrorEmpty()
+    )
+    val retryable = stripeShouldRetry(method, options.idempotencyKey, response)
+    StripeResult(
+        false, parsed.value, response.response.body, status, requestId,
+        responseVersion, options.idempotencyKey, retries, rateReason,
+        stripeErrorFromResponse(parsed.value, status, requestId, retryable)
+    )
+}

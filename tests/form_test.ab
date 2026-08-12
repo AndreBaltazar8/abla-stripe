@@ -1,0 +1,27 @@
+import "../src/stripe.ab"
+import "abla/bytes"
+
+fun main: int {
+    val params = stripeParams()
+    params.add("email", "andré@example.com")
+    params.add("empty", "")
+    params.addArray("expand", ["customer", "line_items.data.price"])
+    params.add("line_items[0][price]", "price_123")
+    params.addBool("automatic_tax[enabled]", true)
+    val expected = "email=andr%C3%A9%40example.com&empty=&expand%5B%5D=customer&expand%5B%5D=line_items.data.price&line_items%5B0%5D%5Bprice%5D=price_123&automatic_tax%5Benabled%5D=true"
+    if (params.encode() != expected) 1
+    else if (stripePercentEncode("a b+c") != "a%20b%2Bc") 2
+    else if (stripeParamKeyValid("bad\nkey")) 3
+    else {
+        val invalid = stripeParams()
+        invalid.add("bad\nkey", "value")
+        if (invalid.valid) 4
+        else {
+            val invalidUtf8 = stripeParams()
+            val invalidValue = byteBuffer()
+            invalidValue.appendByteValue(255)
+            invalidUtf8.add("valid", invalidValue.toText())
+            if (invalidUtf8.valid) 5 else 0
+        }
+    }
+}

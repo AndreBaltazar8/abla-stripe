@@ -1,0 +1,124 @@
+import "../src/stripe.ab"
+
+var stripeSafetyMode: int = 0
+var stripeSafetyAttempts: int = 0
+
+fun stripeSafetyTransport(
+    request: HttpRequest,
+    maximum: int,
+    timeout: int
+): HttpClientResult {
+    stripeSafetyAttempts = stripeSafetyAttempts + 1
+    if (stripeSafetyMode == 1) return HttpClientResult(
+        HttpResponse(503, [], #$jsons {
+            "error": {"type": "api_error", "message": "busy"}
+        }), true, true
+    )
+    if (stripeSafetyMode == 2) return HttpClientResult(
+        HttpResponse(200, [HttpHeader("rEqUeSt-Id", "req_mixed_case")], "{"),
+        true, true
+    )
+    if (stripeSafetyMode == 3) {
+        var oversized = ""
+        while (oversized.size < 1025) oversized = "$oversized!"
+        return HttpClientResult(
+            HttpResponse(200, [HttpHeader("Request-Id", "req_oversized")], oversized),
+            true, true
+        )
+    }
+    HttpClientResult(HttpResponse(200, [], "{}"), true, true)
+}
+
+fun stripeSafetyNoWait(milliseconds: int): void {}
+
+fun stripeSafetyResponse(status: int, shouldRetry: string): HttpClientResult {
+    val headers: array<HttpHeader> = []
+    if (shouldRetry != "") headers.append(
+        HttpHeader("sTrIpE-sHoUlD-rEtRy", shouldRetry)
+    )
+    HttpClientResult(HttpResponse(status, headers, "{}"), true, true)
+}
+
+fun main: int {
+    val networkFailure = HttpClientResult(HttpResponse(0, [], ""), false, false)
+    if (!stripeShouldRetry("GET", "", networkFailure)) return 1
+    if (stripeShouldRetry("POST", "", networkFailure)) return 2
+    if (!stripeShouldRetry("POST", "safe-key", networkFailure)) return 3
+
+    val statuses: array<int> = [409, 429, 500, 502, 503, 504]
+    var index = 0
+    while (index < statuses.size) {
+        if (!stripeShouldRetry("GET", "", stripeSafetyResponse(
+            statuses[index], ""
+        ))) return 4
+        index = index + 1
+    }
+    if (stripeShouldRetry("GET", "", stripeSafetyResponse(503, "false"))) return 5
+    if (!stripeShouldRetry("GET", "", stripeSafetyResponse(400, "true"))) return 6
+    if (stripeShouldRetry("GET", "", stripeSafetyResponse(401, ""))) return 7
+    if (stripeRetryDelay(0, "2") != 2000 ||
+        stripeRetryDelay(0, "9") != 5000) return 8
+
+    val kinds: array<string> = [
+        "api_error", "card_error", "idempotency_error",
+        "invalid_request_error", "authentication_error",
+        "permission_error", "rate_limit_error"
+    ]
+    index = 0
+    while (index < kinds.size) {
+        val root = jsonObject(
+            ["error"],
+            [jsonObject(
+                ["type", "message", "code", "decline_code", "param",
+                 "doc_url", "payment_intent", "payment_method", "setup_intent"],
+                [jsonString(kinds[index]), jsonString("fixture"),
+                 jsonString("code"), jsonString("decline"), jsonString("field"),
+                 jsonString("https://docs.stripe.com/error-codes"),
+                 jsonObject(["id"], [jsonString("pi_123")]),
+                 jsonString("pm_123"), jsonString("seti_123")]
+            )]
+        )
+        val parsed = stripeErrorFromResponse(root, 400, "req_error", false)
+        if (parsed.kind != kinds[index] || parsed.code != "code" ||
+            parsed.declineCode != "decline" || parsed.parameter != "field" ||
+            parsed.paymentIntentId != "pi_123" ||
+            parsed.paymentMethodId != "pm_123" ||
+            parsed.setupIntentId != "seti_123" ||
+            parsed.requestId != "req_error") return 9
+        index = index + 1
+    }
+
+    val config = StripeConfig(
+        "sk_test_safety_secret", stripeDefaultApiVersion(), 30000, 0,
+        1048576, false, StripeAppInfo("", "", ""),
+        "127.0.0.1", 12111, true
+    )
+    val client = stripeClientWithTransport(
+        config, stripeSafetyTransport, stripeSafetyNoWait
+    )
+    stripeSafetyMode = 1
+    stripeSafetyAttempts = 0
+    val unsafePost = client.rawRequest(
+        "POST", "/v1/example", stripeParams(), stripeRequestOptions()
+    )
+    if (unsafePost.succeeded || stripeSafetyAttempts != 1) return 10
+    stripeSafetyMode = 2
+    val malformed = client.rawRequest("GET", "/v1/example", stripeParams())
+    if (malformed.succeeded || malformed.error.kind != "parse_error" ||
+        malformed.requestId != "req_mixed_case") return 11
+    if (textFindSequence(malformed.error.message, "sk_test_safety_secret") >= 0 ||
+        textFindSequence(unsafePost.error.message, "sk_test_safety_secret") >= 0) return 12
+    val smallConfig = StripeConfig(
+        "sk_test_safety_secret", stripeDefaultApiVersion(), 30000, 0,
+        1024, false, StripeAppInfo("", "", ""),
+        "127.0.0.1", 12111, true
+    )
+    val smallClient = stripeClientWithTransport(
+        smallConfig, stripeSafetyTransport, stripeSafetyNoWait
+    )
+    stripeSafetyMode = 3
+    val oversized = smallClient.rawRequest("GET", "/v1/example", stripeParams())
+    if (oversized.succeeded || oversized.error.kind != "parse_error" ||
+        oversized.body != "" || oversized.requestId != "req_oversized") return 13
+    0
+}

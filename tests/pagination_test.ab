@@ -1,0 +1,88 @@
+import "../src/stripe.ab"
+
+var stripePageAttempts: int = 0
+var stripePageSecondPath: string = ""
+var stripePageMode: int = 0
+
+fun stripePageTransport(
+    request: HttpRequest,
+    maximum: int,
+    timeout: int
+): HttpClientResult {
+    stripePageAttempts = stripePageAttempts + 1
+    if (stripePageAttempts == 2) stripePageSecondPath = request.path
+    if (stripePageMode == 1) return HttpClientResult(HttpResponse(200, [], #$jsons {
+        "object": "list", "data": [], "has_more": true,
+        "url": "/v1/customers"
+    }), true, true)
+    if (stripePageMode == 2) return HttpClientResult(HttpResponse(200, [], #$jsons {
+        "object": "list", "data": [{"id": "cus_same"}], "has_more": true,
+        "url": "/v1/customers"
+    }), true, true)
+    if (stripePageMode == 3) return HttpClientResult(HttpResponse(200, [], #$jsons {
+        "object": "list", "data": [{"object": "customer"}], "has_more": true,
+        "url": "/v1/customers"
+    }), true, true)
+    val body = if (stripePageAttempts == 1) #$jsons {
+        "object": "list",
+        "data": [
+            {"id": "cus_1", "object": "customer"},
+            {"id": "cus_2", "object": "customer"}
+        ],
+        "has_more": true,
+        "url": "/v1/customers"
+    } else #$jsons {
+        "object": "list",
+        "data": [{"id": "cus_3", "object": "customer"}],
+        "has_more": false,
+        "url": "/v1/customers"
+    }
+    HttpClientResult(HttpResponse(200, [
+        HttpHeader("Request-Id", "req_page")
+    ], body), true, true)
+}
+
+fun stripePageNoWait(milliseconds: int): void {}
+
+fun main: int {
+    val config = StripeConfig(
+        "sk_test_example_secret", stripeDefaultApiVersion(), 30000, 0,
+        1048576, false, StripeAppInfo("", "", ""),
+        "127.0.0.1", 12111, true
+    )
+    val client = stripeClientWithTransport(
+        config, stripePageTransport, stripePageNoWait
+    )
+    val collected = client.collectList(
+        "/v1/customers", stripeParams(), 3
+    )
+    val normalAttempts = stripePageAttempts
+    val normalSecondPath = stripePageSecondPath
+    val invalid = client.collectList(
+        "/v1/customers", stripeParams(), 0
+    )
+    stripePageMode = 1
+    stripePageAttempts = 0
+    val empty = client.collectList("/v1/customers", stripeParams(), 10)
+    stripePageMode = 2
+    stripePageAttempts = 0
+    val repeated = client.collectList("/v1/customers", stripeParams(), 10)
+    stripePageMode = 3
+    stripePageAttempts = 0
+    val missing = client.collectList("/v1/customers", stripeParams(), 10)
+    val cursorParams = stripeParams()
+    cursorParams.add("starting_after", "cus_external")
+    val callerCursor = client.collectList("/v1/customers", cursorParams, 10)
+    val excessive = client.collectList("/v1/customers", stripeParams(), 10001)
+    if (!collected.succeeded || collected.data.size != 3) 1
+    else if (collected.hasMore) 2
+    else if (collected.data[2].getString("id") != "cus_3") 3
+    else if (normalAttempts != 2) 4
+    else if (textFindSequence(normalSecondPath, "starting_after=cus_2") < 0) 5
+    else if (invalid.succeeded || invalid.response.error.kind != "pagination_error") 6
+    else if (empty.succeeded || empty.response.error.kind != "pagination_error") 7
+    else if (repeated.succeeded || repeated.response.error.kind != "pagination_error") 8
+    else if (missing.succeeded || missing.response.error.kind != "pagination_error") 9
+    else if (callerCursor.succeeded || excessive.succeeded) 10
+    else 0
+}

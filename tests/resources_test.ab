@@ -1,0 +1,93 @@
+import "../src/stripe.ab"
+
+fun main: int {
+    val subscriptionJson = jsonParse(#$jsons {
+        "id": "sub_123",
+        "object": "subscription",
+        "customer": {"id": "cus_123", "object": "customer"},
+        "status": "active",
+        "cancel_at_period_end": true,
+        "livemode": false,
+        "metadata": {"account_id": "acc_123"},
+        "items": {"data": [{
+            "current_period_start": 1700000000,
+            "current_period_end": 1702592000,
+            "price": {"id": "price_123", "product": {"id": "prod_123"}}
+        }]}
+    })
+    val priceJson = jsonParse(#$jsons {
+        "id": "price_123",
+        "object": "price",
+        "product": "prod_123",
+        "active": true,
+        "currency": "eur",
+        "unit_amount": 2999,
+        "recurring": {"interval": "year", "interval_count": 1},
+        "tax_behavior": "inclusive",
+        "livemode": false,
+        "metadata": {}
+    })
+    val customerJson = jsonParse(#$jsons {
+        "id": "cus_123", "object": "customer", "email": "andré@example.com",
+        "name": "André", "livemode": false,
+        "metadata": {"account_id": "acc_123"}
+    })
+    val checkoutJson = jsonParse(#$jsons {
+        "id": "cs_123", "object": "checkout.session",
+        "url": "https://checkout.stripe.com/c/pay/cs_123",
+        "mode": "subscription", "status": "complete",
+        "customer": "cus_123", "subscription": {"id": "sub_123"},
+        "client_reference_id": "acc_123", "livemode": false,
+        "metadata": {"account_id": "acc_123"}
+    })
+    val portalJson = jsonParse(#$jsons {
+        "id": "bps_123", "object": "billing_portal.session",
+        "url": "https://billing.stripe.com/p/session/bps_123",
+        "customer": {"id": "cus_123"}, "livemode": false
+    })
+    val productJson = jsonParse(#$jsons {
+        "id": "prod_123", "object": "product", "name": "Kilo+",
+        "active": true, "livemode": false, "metadata": {}
+    })
+    val eventJson = jsonParse(#$jsons {
+        "id": "evt_123", "object": "event", "type": "customer.updated",
+        "created": 1700000000, "livemode": false,
+        "api_version": "2026-07-29.dahlia",
+        "data": {"object": {"id": "cus_123"}}
+    })
+    val listJson = jsonParse(#$jsons {
+        "object": "list", "data": [{"id": "cus_123"}],
+        "has_more": true, "url": "/v1/customers"
+    })
+    if (!subscriptionJson.succeeded || !priceJson.succeeded ||
+        !customerJson.succeeded || !checkoutJson.succeeded ||
+        !portalJson.succeeded || !productJson.succeeded ||
+        !eventJson.succeeded || !listJson.succeeded) return 1
+    val subscription = stripeSubscription(subscriptionJson.value)
+    val price = stripePrice(priceJson.value)
+    val customer = stripeCustomer(customerJson.value)
+    val checkout = stripeCheckoutSession(checkoutJson.value)
+    val portal = stripeBillingPortalSession(portalJson.value)
+    val product = stripeProduct(productJson.value)
+    val event = stripeEvent(eventJson.value)
+    val list = stripeList(listJson.value)
+    if (subscription.customerId != "cus_123" || subscription.productId != "prod_123") 2
+    else if (subscription.priceId != "price_123" ||
+        subscription.currentPeriodStart != 1700000000 ||
+        subscription.currentPeriodEnd != 1702592000) 3
+    else if (!subscription.cancelAtPeriodEnd || subscription.status != "active") 4
+    else if (price.productId != "prod_123" || price.unitAmount != 2999) 5
+    else if (price.recurringInterval != "year" || price.taxBehavior != "inclusive") 6
+    else if (customer.name != "André" || customer.email != "andré@example.com" ||
+        customer.metadata.getString("account_id") != "acc_123") 7
+    else if (checkout.customerId != "cus_123" ||
+        checkout.subscriptionId != "sub_123" ||
+        checkout.clientReferenceId != "acc_123") 8
+    else if (portal.customerId != "cus_123" || portal.url == "") 9
+    else if (!product.active || product.name != "Kilo+") 10
+    else if (event.eventType != "customer.updated" ||
+        event.dataObject.getString("id") != "cus_123") 11
+    else if (list.data.size != 1 || !list.hasMore ||
+        list.url != "/v1/customers") 12
+    else 0
+}

@@ -1,0 +1,125 @@
+import "../src/stripe.ab"
+
+var stripeClientTestMode: int = 0
+var stripeClientTestAttempts: int = 0
+var stripeClientTelemetryHeader: string = ""
+
+fun stripeClientTestTransport(
+    request: HttpRequest,
+    maximum: int,
+    timeout: int
+): HttpClientResult {
+    stripeClientTestAttempts = stripeClientTestAttempts + 1
+    stripeClientTelemetryHeader = request.header("X-Stripe-Client-Telemetry")
+    if (stripeClientTestMode == 1) return HttpClientResult(
+        HttpResponse(503, [
+            HttpHeader("Stripe-Should-Retry", "false"),
+            HttpHeader("Request-Id", "req_no_retry")
+        ], #$jsons {
+            "error": {"type": "api_error", "message": "busy"}
+        }),
+        true, true
+    )
+    if (stripeClientTestMode == 2) return HttpClientResult(
+        HttpResponse(402, [HttpHeader("Request-Id", "req_card")],
+        #$jsons {"error": {
+            "type": "card_error",
+            "message": "Card declined",
+            "code": "card_declined",
+            "decline_code": "insufficient_funds",
+            "param": "payment_method",
+            "doc_url": "https://docs.stripe.com/error-codes/card-declined",
+            "payment_intent": {"id": "pi_123"},
+            "payment_method": "pm_123"
+        }}),
+        true, true
+    )
+    if (stripeClientTestMode == 3) return HttpClientResult(
+        HttpResponse(302, [HttpHeader("Location", "https://evil.example/")],
+            #$jsons {
+                "error": {"type": "api_error", "message": "redirect"}
+            }),
+        true, true
+    )
+    HttpClientResult(HttpResponse(200, [], "{}"), true, true)
+}
+
+fun stripeClientTestNoWait(milliseconds: int): void {}
+
+fun stripeClientTestConfig(): StripeConfig = StripeConfig(
+    "sk_test_do_not_expose_this", stripeDefaultApiVersion(), 30000, 2,
+    1048576, true, StripeAppInfo("", "", ""),
+    "127.0.0.1", 12111, true
+)
+
+fun main: int {
+    val client = stripeClientWithTransport(
+        stripeClientTestConfig(), stripeClientTestTransport,
+        stripeClientTestNoWait
+    )
+    stripeClientTestMode = 1
+    stripeClientTestAttempts = 0
+    val noRetry = client.rawRequest(
+        "GET", "/v1/customers", stripeParams()
+    )
+    if (noRetry.succeeded || stripeClientTestAttempts != 1) return 1
+    if (noRetry.error.kind != "api_error" || noRetry.requestId != "req_no_retry") return 2
+
+    stripeClientTestMode = 2
+    stripeClientTestAttempts = 0
+    val card = client.rawRequest(
+        "POST", "/v1/payment_intents", stripeParams(), stripeRequestOptions()
+    )
+    if (card.succeeded || stripeClientTestAttempts != 1) return 3
+    if (card.error.kind != "card_error" || card.error.code != "card_declined") return 4
+    if (card.error.declineCode != "insufficient_funds" ||
+        card.error.paymentIntentId != "pi_123" ||
+        card.error.paymentMethodId != "pm_123") return 5
+    if (textFindSequence(card.error.message, "sk_test_") >= 0) return 6
+    val telemetry = jsonParse(stripeClientTelemetryHeader)
+    if (!telemetry.succeeded ||
+        telemetry.value.get("last_request_metrics").getString("request_id") !=
+            "req_no_retry" ||
+        !telemetry.value.get("last_request_metrics").get(
+            "request_duration_ms"
+        ).isNumber() ||
+        telemetry.value.get("last_request_metrics").getInt(
+            "request_duration_ms"
+        ) < 0) return 13
+
+    stripeClientTestMode = 3
+    stripeClientTestAttempts = 0
+    val redirect = client.rawRequest("GET", "/v1/customers", stripeParams())
+    if (redirect.succeeded || stripeClientTestAttempts != 1 || redirect.status != 302) return 7
+
+    val invalidParams = stripeParams()
+    invalidParams.add("bad\r\nHeader", "x")
+    stripeClientTestAttempts = 0
+    val invalid = client.rawRequest("GET", "/v1/customers", invalidParams)
+    if (invalid.succeeded || invalid.error.kind != "configuration_error") return 8
+    if (stripeClientTestAttempts != 0) return 9
+    if (client.rawRequest("GET", "https://evil.example/v1/x", stripeParams()).succeeded) return 10
+    if (client.rawRequest("GET", "/v1/x?raw=true", stripeParams()).succeeded) return 11
+    if (client.rawRequest("GET", "/v1/x/..", stripeParams()).succeeded ||
+        client.rawRequest("GET", "/v1/x/%2E%2E", stripeParams()).succeeded ||
+        client.rawRequest("GET", "/v1/bad path", stripeParams()).succeeded) return 16
+    val bounded = httpParseResponseBounded(
+        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", 2
+    )
+    val tooSmall = httpParseResponseBounded(
+        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", 1
+    )
+    if (!bounded.complete || tooSmall.complete) return 12
+    val invalidOptions = StripeRequestOptions("", "", "", 600001, 0)
+    stripeClientTestAttempts = 0
+    if (client.rawRequest(
+        "GET", "/v1/customers", stripeParams(), invalidOptions
+    ).error.kind != "configuration_error" || stripeClientTestAttempts != 0) return 14
+    val injectedConfig = StripeConfig(
+        "sk_test_do_not_expose_this", "2026-07-29.dahlia\r\nX-Bad: yes",
+        30000, 1, 1048576, false, StripeAppInfo("", "", ""),
+        "127.0.0.1", 12111, true
+    )
+    if (injectedConfig.valid()) return 15
+    0
+}

@@ -1,0 +1,162 @@
+import "abla/json"
+
+fun stripeExpandableId(value: Json): string =
+    if (value.isString()) value.asString() else value.getString("id")
+
+fun stripeJsonStringMap(value: Json): Json =
+    if (value.isObject()) value else jsonObject([], [])
+
+class StripeCustomer(
+    val id: string,
+    val email: string,
+    val name: string,
+    val livemode: bool,
+    val metadata: Json,
+    val raw: Json
+)
+
+fun stripeCustomer(value: Json): StripeCustomer = StripeCustomer(
+    value.getString("id"), value.getString("email"), value.getString("name"),
+    value.get("livemode").asBoolean(), stripeJsonStringMap(value.get("metadata")),
+    value
+)
+
+class StripeCheckoutSession(
+    val id: string,
+    val url: string,
+    val mode: string,
+    val status: string,
+    val customerId: string,
+    val subscriptionId: string,
+    val clientReferenceId: string,
+    val livemode: bool,
+    val metadata: Json,
+    val raw: Json
+)
+
+fun stripeCheckoutSession(value: Json): StripeCheckoutSession = StripeCheckoutSession(
+    value.getString("id"), value.getString("url"), value.getString("mode"),
+    value.getString("status"), stripeExpandableId(value.get("customer")),
+    stripeExpandableId(value.get("subscription")),
+    value.getString("client_reference_id"), value.get("livemode").asBoolean(),
+    stripeJsonStringMap(value.get("metadata")), value
+)
+
+class StripeBillingPortalSession(
+    val id: string,
+    val url: string,
+    val customerId: string,
+    val livemode: bool,
+    val raw: Json
+)
+
+fun stripeBillingPortalSession(value: Json): StripeBillingPortalSession =
+    StripeBillingPortalSession(
+        value.getString("id"), value.getString("url"),
+        stripeExpandableId(value.get("customer")),
+        value.get("livemode").asBoolean(), value
+    )
+
+class StripeSubscription(
+    val id: string,
+    val customerId: string,
+    val status: string,
+    val cancelAtPeriodEnd: bool,
+    val currentPeriodStart: int,
+    val currentPeriodEnd: int,
+    val productId: string,
+    val priceId: string,
+    val livemode: bool,
+    val metadata: Json,
+    val raw: Json
+)
+
+fun stripeSubscription(value: Json): StripeSubscription {
+    val data = value.get("items").get("data")
+    var item = jsonNull()
+    if (data.isArray() && data.size() > 0) item = data.at(0)
+    val price = item.get("price")
+    var begin = item.getInt("current_period_start")
+    var end = item.getInt("current_period_end")
+    if (begin == 0) begin = value.getInt("current_period_start")
+    if (end == 0) end = value.getInt("current_period_end")
+    return StripeSubscription(
+        value.getString("id"), stripeExpandableId(value.get("customer")),
+        value.getString("status"), value.get("cancel_at_period_end").asBoolean(),
+        begin, end, stripeExpandableId(price.get("product")),
+        price.getString("id"), value.get("livemode").asBoolean(),
+        stripeJsonStringMap(value.get("metadata")), value
+    )
+}
+
+class StripeProduct(
+    val id: string,
+    val name: string,
+    val active: bool,
+    val livemode: bool,
+    val metadata: Json,
+    val raw: Json
+)
+
+fun stripeProduct(value: Json): StripeProduct = StripeProduct(
+    value.getString("id"), value.getString("name"),
+    value.get("active").asBoolean(), value.get("livemode").asBoolean(),
+    stripeJsonStringMap(value.get("metadata")), value
+)
+
+class StripePrice(
+    val id: string,
+    val productId: string,
+    val active: bool,
+    val currency: string,
+    val unitAmount: int,
+    val recurringInterval: string,
+    val recurringIntervalCount: int,
+    val taxBehavior: string,
+    val livemode: bool,
+    val metadata: Json,
+    val raw: Json
+)
+
+fun stripePrice(value: Json): StripePrice = StripePrice(
+    value.getString("id"), stripeExpandableId(value.get("product")),
+    value.get("active").asBoolean(), value.getString("currency"),
+    value.getInt("unit_amount"), value.get("recurring").getString("interval"),
+    value.get("recurring").getInt("interval_count"),
+    value.getString("tax_behavior"), value.get("livemode").asBoolean(),
+    stripeJsonStringMap(value.get("metadata")), value
+)
+
+class StripeEvent(
+    val id: string,
+    val eventType: string,
+    val created: int,
+    val livemode: bool,
+    val apiVersion: string,
+    val dataObject: Json,
+    val raw: Json
+)
+
+fun stripeEvent(value: Json): StripeEvent = StripeEvent(
+    value.getString("id"), value.getString("type"), value.getInt("created"),
+    value.get("livemode").asBoolean(), value.getString("api_version"),
+    value.get("data").get("object"), value
+)
+
+class StripeList(
+    val data: array<Json>,
+    val hasMore: bool,
+    val url: string,
+    val raw: Json
+)
+
+fun stripeList(value: Json): StripeList {
+    val data: array<Json> = []
+    val source = value.get("data")
+    var index = 0
+    while (source.isArray() && index < source.size()) {
+        data.append(source.at(index))
+        index = index + 1
+    }
+    StripeList(data, value.get("has_more").asBoolean(), value.getString("url"), value)
+}

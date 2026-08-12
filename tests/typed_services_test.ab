@@ -1,0 +1,125 @@
+import "../src/stripe.ab"
+
+var stripeTypedExpectedMethod: string = ""
+var stripeTypedExpectedPath: string = ""
+var stripeTypedResponseBody: string = ""
+var stripeTypedCalls: int = 0
+var stripeTypedMismatch: bool = false
+
+fun stripeTypedTransport(
+    request: HttpRequest,
+    maximum: int,
+    timeout: int
+): HttpClientResult {
+    stripeTypedCalls = stripeTypedCalls + 1
+    if (request.method != stripeTypedExpectedMethod ||
+        request.path != stripeTypedExpectedPath) stripeTypedMismatch = true
+    HttpClientResult(HttpResponse(200, [
+        HttpHeader("Request-Id", "req_typed")
+    ], stripeTypedResponseBody), true, true)
+}
+
+fun stripeTypedNoWait(milliseconds: int): void {}
+
+fun stripeTypedExpect(method: string, path: string, body: string): void {
+    stripeTypedExpectedMethod = method
+    stripeTypedExpectedPath = path
+    stripeTypedResponseBody = body
+    return
+}
+
+fun main: int {
+    val config = StripeConfig(
+        "sk_test_typed_services", stripeDefaultApiVersion(), 30000, 0,
+        1048576, false, StripeAppInfo("", "", ""),
+        "127.0.0.1", 12111, true
+    )
+    val client = stripeClientWithTransport(
+        config, stripeTypedTransport, stripeTypedNoWait
+    )
+    val mutation = stripeIdempotentRequest("typed-services-fixture")
+    val customer = #$jsons {
+        "id": "cus_123", "object": "customer", "email": "a@example.test",
+        "name": "A", "livemode": false, "metadata": {}
+    }
+    val checkout = #$jsons {
+        "id": "cs_123", "object": "checkout.session", "url": "https://checkout.stripe.com/c/pay/cs_123",
+        "mode": "subscription", "status": "open", "customer": "cus_123",
+        "subscription": "sub_123", "client_reference_id": "acc_123",
+        "livemode": false, "metadata": {}
+    }
+    val portal = #$jsons {
+        "id": "bps_123", "object": "billing_portal.session",
+        "url": "https://billing.stripe.com/p/session/bps_123",
+        "customer": "cus_123", "livemode": false
+    }
+    val subscription = #$jsons {
+        "id": "sub_123", "object": "subscription", "customer": "cus_123",
+        "status": "active", "cancel_at_period_end": false,
+        "livemode": false, "metadata": {},
+        "items": {"data": [{"current_period_start": 1,
+            "current_period_end": 2,
+            "price": {"id": "price_123", "product": "prod_123"}}]}
+    }
+    val product = #$jsons {
+        "id": "prod_123", "object": "product", "name": "Kilo+",
+        "active": true, "livemode": false, "metadata": {}
+    }
+    val price = #$jsons {
+        "id": "price_123", "object": "price", "product": "prod_123",
+        "active": true, "currency": "eur", "unit_amount": 100,
+        "recurring": {"interval": "year", "interval_count": 1},
+        "tax_behavior": "inclusive", "livemode": false, "metadata": {}
+    }
+    val event = #$jsons {
+        "id": "evt_123", "object": "event", "type": "customer.updated",
+        "created": 1, "livemode": false, "api_version": "2026-07-29.dahlia",
+        "data": {"object": {"id": "cus_123"}}
+    }
+    val list = #$jsons {
+        "object": "list", "data": [], "has_more": false, "url": "/v1/items"
+    }
+
+    stripeTypedExpect("POST", "/v1/customers", customer)
+    if (!client.customersCreate(stripeParams(), mutation).succeeded) return 1
+    stripeTypedExpect("GET", "/v1/customers/cus_123", customer)
+    if (!client.customersRetrieve("cus_123").succeeded) return 2
+    stripeTypedExpect("POST", "/v1/customers/cus_123", customer)
+    if (!client.customersUpdate("cus_123", stripeParams(), mutation).succeeded) return 3
+    stripeTypedExpect("GET", "/v1/customers", list)
+    if (!client.customersList().succeeded) return 4
+
+    stripeTypedExpect("POST", "/v1/checkout/sessions", checkout)
+    if (!client.checkoutSessionsCreate(stripeParams(), mutation).succeeded) return 5
+    stripeTypedExpect("GET", "/v1/checkout/sessions/cs_123", checkout)
+    if (!client.checkoutSessionsRetrieve("cs_123").succeeded) return 6
+    stripeTypedExpect("GET", "/v1/checkout/sessions", list)
+    if (!client.checkoutSessionsList().succeeded) return 7
+    stripeTypedExpect("POST", "/v1/billing_portal/sessions", portal)
+    if (!client.billingPortalSessionsCreate(stripeParams(), mutation).succeeded) return 8
+
+    stripeTypedExpect("GET", "/v1/subscriptions/sub_123", subscription)
+    if (!client.subscriptionsRetrieve("sub_123").succeeded) return 9
+    stripeTypedExpect("POST", "/v1/subscriptions/sub_123", subscription)
+    if (!client.subscriptionsUpdate("sub_123", stripeParams(), mutation).succeeded) return 10
+    stripeTypedExpect("DELETE", "/v1/subscriptions/sub_123", subscription)
+    if (!client.subscriptionsCancel("sub_123", stripeParams(), mutation).succeeded) return 11
+    stripeTypedExpect("GET", "/v1/subscriptions", list)
+    if (!client.subscriptionsList().succeeded) return 12
+
+    stripeTypedExpect("GET", "/v1/products/prod_123", product)
+    if (!client.productsRetrieve("prod_123").succeeded) return 13
+    stripeTypedExpect("GET", "/v1/products", list)
+    if (!client.productsList().succeeded) return 14
+    stripeTypedExpect("GET", "/v1/prices/price_123", price)
+    if (!client.pricesRetrieve("price_123").succeeded) return 15
+    stripeTypedExpect("GET", "/v1/prices", list)
+    if (!client.pricesList().succeeded) return 16
+    stripeTypedExpect("GET", "/v1/events/evt_123", event)
+    if (!client.eventsRetrieve("evt_123").succeeded) return 17
+    stripeTypedExpect("GET", "/v1/events", list)
+    if (!client.eventsList().succeeded) return 18
+
+    if (stripeTypedMismatch || stripeTypedCalls != 18) return 19
+    0
+}

@@ -1,0 +1,99 @@
+import "abla/text"
+
+class StripeParam(val key: string, val value: string)
+
+class StripeParams(
+    var entries: array<StripeParam>,
+    var valid: bool
+)
+
+fun stripeParams(): StripeParams = StripeParams([], true)
+
+fun stripeParamKeyValid(key: string): bool {
+    var valid = key.size > 0 && key.isValidUtf8()
+    var index = 0
+    while (valid && index < key.size) {
+        val byte = key[index]
+        if (byte <= 31 || byte == 127) valid = false
+        index = index + 1
+    }
+    valid
+}
+
+fun StripeParams.add(key: string, value: string): void {
+    if (stripeParamKeyValid(key) && value.isValidUtf8()) {
+        this.entries.append(StripeParam(key, value))
+    }
+    else this.valid = false
+}
+
+fun StripeParams.addInt(key: string, value: int): void =
+    this.add(key, "$value")
+
+fun StripeParams.addBool(key: string, value: bool): void =
+    this.add(key, if (value) "true" else "false")
+
+fun StripeParams.addArray(key: string, values: array<string>): void {
+    var index = 0
+    while (index < values.size) {
+        this.add("$key[]", values[index])
+        index = index + 1
+    }
+}
+
+fun stripeUnreserved(byte: int): bool =
+    (byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122) ||
+    (byte >= 48 && byte <= 57) || byte == 45 || byte == 46 ||
+    byte == 95 || byte == 126
+
+fun stripePercentEncode(value: string): string {
+    val hexadecimal = "0123456789ABCDEF"
+    var result = ""
+    var index = 0
+    while (index < value.size) {
+        val byte = value[index]
+        if (stripeUnreserved(byte)) {
+            result = "$result${value.slice(index, index + 1)}"
+        } else {
+            val high = byte / 16
+            val low = byte - high * 16
+            result = "$result%${hexadecimal.slice(high, high + 1)}${hexadecimal.slice(low, low + 1)}"
+        }
+        index = index + 1
+    }
+    result
+}
+
+fun StripeParams.encode(): string {
+    var result = ""
+    var index = 0
+    while (index < this.entries.size) {
+        if (index > 0) result = "$result&"
+        result = "$result${stripePercentEncode(this.entries[index].key)}=${stripePercentEncode(this.entries[index].value)}"
+        index = index + 1
+    }
+    result
+}
+
+fun StripeParams.copy(): StripeParams {
+    val copied = stripeParams()
+    var index = 0
+    while (index < this.entries.size) {
+        copied.entries.append(StripeParam(
+            this.entries[index].key, this.entries[index].value
+        ))
+        index = index + 1
+    }
+    copied.valid = this.valid
+    copied
+}
+
+fun StripeParams.has(key: string): bool {
+    var found = false
+    var index = 0
+    while (!found && index < this.entries.size) {
+        if (this.entries[index].key == key) found = true
+        index = index + 1
+    }
+    found
+}

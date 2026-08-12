@@ -1,0 +1,81 @@
+import "../src/stripe.ab"
+
+var stripeTestAttempts: int = 0
+var stripeTestPath: string = ""
+var stripeTestBody: string = ""
+var stripeTestAuthorization: string = ""
+var stripeTestIdempotency: string = ""
+var stripeTestRetryChanged: bool = false
+
+fun stripeTestTransport(
+    request: HttpRequest,
+    maximum: int,
+    timeout: int
+): HttpClientResult {
+    stripeTestAttempts = stripeTestAttempts + 1
+    if (stripeTestAttempts > 1 &&
+        (request.path != stripeTestPath || request.body != stripeTestBody ||
+         request.header("Idempotency-Key") != stripeTestIdempotency)) {
+        stripeTestRetryChanged = true
+    }
+    stripeTestPath = request.path
+    stripeTestBody = request.body
+    stripeTestAuthorization = request.header("Authorization")
+    stripeTestIdempotency = request.header("Idempotency-Key")
+    if (stripeTestAttempts == 1) HttpClientResult(
+        HttpResponse(503, [
+            HttpHeader("Content-Type", "application/json"),
+            HttpHeader("Request-Id", "req_retry"),
+            HttpHeader("Stripe-Should-Retry", "true")
+        ], #$jsons {
+            "error": {"type": "api_error", "message": "temporary"}
+        }),
+        true, true
+    ) else HttpClientResult(
+        HttpResponse(200, [
+            HttpHeader("Content-Type", "application/json"),
+            HttpHeader("Request-Id", "req_success"),
+            HttpHeader("Stripe-Version", "2026-07-29.dahlia")
+        ], #$jsons {
+            "id": "cus_123",
+            "object": "customer",
+            "email": "andré@example.com",
+            "name": "André",
+            "livemode": false,
+            "metadata": {"account_id": "acc_123"}
+        }),
+        true, true
+    )
+}
+
+fun stripeTestNoWait(milliseconds: int): void {}
+
+fun stripeTestConfig(): StripeConfig = StripeConfig(
+    "sk_test_example_secret", stripeDefaultApiVersion(), 30000, 1,
+    1048576, false, StripeAppInfo("kilo", "0.1.0", "https://kilo.pt"),
+    "127.0.0.1", 12111, true
+)
+
+fun main: int {
+    val params = stripeParams()
+    params.add("email", "andré@example.com")
+    params.add("metadata[account_id]", "acc_123")
+    val client = stripeClientWithTransport(
+        stripeTestConfig(), stripeTestTransport, stripeTestNoWait
+    )
+    val result = client.customersCreate(
+        params, stripeIdempotentRequest("customer-acc-123")
+    )
+    val missingKey = client.customersCreate(params, stripeRequestOptions())
+    if (!result.succeeded || result.customer.id != "cus_123") 1
+    else if (result.customer.name != "André" || result.response.retries != 1) 2
+    else if (result.response.requestId != "req_success") 3
+    else if (stripeTestAttempts != 2 || stripeTestPath != "/v1/customers") 4
+    else if (stripeTestBody != "email=andr%C3%A9%40example.com&metadata%5Baccount_id%5D=acc_123") 5
+    else if (stripeTestAuthorization != "Bearer sk_test_example_secret") 6
+    else if (stripeTestIdempotency != "customer-acc-123") 7
+    else if (missingKey.succeeded || missingKey.response.error.kind != "configuration_error") 8
+    else if (stripeTestAttempts != 2) 9
+    else if (stripeTestRetryChanged) 10
+    else 0
+}

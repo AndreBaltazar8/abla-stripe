@@ -1,0 +1,77 @@
+import "../src/stripe.ab"
+
+fun main: int {
+    val secret = "whsec_test_secret"
+    val previous = "whsec_previous_secret"
+    val body = #$jsons {
+        "id": "evt_123",
+        "object": "event",
+        "type": "customer.subscription.updated",
+        "created": 1700000000,
+        "livemode": false,
+        "api_version": "2026-07-29.dahlia",
+        "data": {"object": {"id": "sub_123"}}
+    }
+    val header = stripeWebhookGenerateTestHeader(body, secret, 1700000000)
+    val valid = stripeWebhookConstructEvent(
+        body, header, [previous, secret], 1700000100, 300
+    )
+    val mutated = stripeWebhookConstructEvent(
+        "$body ", header, [secret], 1700000100, 300
+    )
+    val stale = stripeWebhookConstructEvent(
+        body, header, [secret], 1700001000, 300
+    )
+    val disabled = stripeWebhookConstructEvent(
+        body, header, [secret], 1700000000, 0
+    )
+    val rotatedHeader = "$header, v1=invalid"
+    val rotated = stripeWebhookConstructEvent(
+        body, rotatedHeader, [previous, secret], 1700000000, 300
+    )
+    val previousHeader = stripeWebhookGenerateTestHeader(
+        body, previous, 1700000000
+    )
+    val previousValid = stripeWebhookConstructEvent(
+        body, previousHeader, [secret, previous], 1700000000, 300
+    )
+    val wrongSecret = stripeWebhookConstructEvent(
+        body, header, ["whsec_wrong"], 1700000000, 300
+    )
+    val malformed = stripeWebhookConstructEvent(
+        body, "x=ignored,v0=old", [secret], 1700000000, 300
+    )
+    val future = stripeWebhookConstructEvent(
+        body, header, [secret], 1699999000, 300
+    )
+    val reordered = stripeWebhookConstructEvent(
+        body,
+        "v1=${stripeSignatureParse(header).signatures[0]},junk=x,t=1700000000",
+        [secret], 1700000000, 300
+    )
+    val invalidJsonBody = "{"
+    val invalidJson = stripeWebhookConstructEvent(
+        invalidJsonBody,
+        stripeWebhookGenerateTestHeader(invalidJsonBody, secret, 1700000000),
+        [secret], 1700000000, 300
+    )
+    val invalidEventBody = #$jsons {"id": "evt_bad", "type": "test"}
+    val invalidEvent = stripeWebhookConstructEvent(
+        invalidEventBody,
+        stripeWebhookGenerateTestHeader(invalidEventBody, secret, 1700000000),
+        [secret], 1700000000, 300
+    )
+    if (!valid.succeeded || valid.event.id != "evt_123") 1
+    else if (mutated.succeeded || mutated.error.kind != "invalid_signature") 2
+    else if (stale.succeeded || stale.error.kind != "stale_timestamp") 3
+    else if (disabled.succeeded || disabled.error.kind != "configuration_error") 4
+    else if (!rotated.succeeded) 5
+    else if (!previousValid.succeeded) 6
+    else if (wrongSecret.succeeded || wrongSecret.error.kind != "invalid_signature") 7
+    else if (malformed.succeeded || malformed.error.kind != "malformed_header") 8
+    else if (future.succeeded || future.error.kind != "stale_timestamp") 9
+    else if (!reordered.succeeded) 10
+    else if (invalidJson.succeeded || invalidJson.error.kind != "invalid_json") 11
+    else if (invalidEvent.succeeded || invalidEvent.error.kind != "invalid_event") 12
+    else 0
+}

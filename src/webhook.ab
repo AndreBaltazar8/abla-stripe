@@ -1,0 +1,145 @@
+import "abla/crypto"
+import "abla/json"
+import "resources.ab"
+
+class StripeSignatureHeader(
+    val timestamps: array<int>,
+    val signatures: array<string>,
+    val valid: bool
+)
+
+fun stripeTrimAscii(value: string): string {
+    var begin = 0
+    var end = value.size
+    while (begin < end && (value[begin] == 32 || value[begin] == 9)) {
+        begin = begin + 1
+    }
+    while (end > begin && (value[end - 1] == 32 || value[end - 1] == 9)) {
+        end = end - 1
+    }
+    value.slice(begin, end)
+}
+
+fun stripeSignatureParse(header: string): StripeSignatureHeader {
+    val timestamps: array<int> = []
+    val signatures: array<string> = []
+    if (header.size == 0 || header.size > 16384) return StripeSignatureHeader(
+        timestamps, signatures, false
+    )
+    var begin = 0
+    var index = 0
+    while (index <= header.size) {
+        if (index == header.size || header[index] == 44) {
+            val field = stripeTrimAscii(header.slice(begin, index))
+            if (field.size > 2 && field.size <= 15 &&
+                field.slice(0, 2) == "t=") {
+                val text = field.slice(2, field.size)
+                val timestamp = stripeParseInt(text, -1)
+                if (timestamp >= 0 && "$timestamp" == text) timestamps.append(timestamp)
+            } else if (field.size > 3 && field.slice(0, 3) == "v1=") {
+                signatures.append(field.slice(3, field.size))
+            }
+            begin = index + 1
+        }
+        index = index + 1
+    }
+    StripeSignatureHeader(
+        timestamps, signatures,
+        timestamps.size > 0 && signatures.size > 0
+    )
+}
+
+class StripeWebhookError(val kind: string, val message: string)
+
+class StripeWebhookResult(
+    val succeeded: bool,
+    val event: StripeEvent,
+    val value: Json,
+    val error: StripeWebhookError
+)
+
+fun stripeEmptyEvent(): StripeEvent = stripeEvent(jsonObject([], []))
+
+fun stripeWebhookFailure(kind: string, message: string): StripeWebhookResult =
+    StripeWebhookResult(
+        false, stripeEmptyEvent(), jsonNull(), StripeWebhookError(kind, message)
+    )
+
+fun stripeWebhookConstructEvent(
+    rawBody: string,
+    signatureHeader: string,
+    secrets: array<string>,
+    nowUnixSeconds: int,
+    toleranceSeconds: int = 300
+): StripeWebhookResult {
+    if (toleranceSeconds <= 0 || nowUnixSeconds <= 0) return stripeWebhookFailure(
+        "configuration_error", "Webhook tolerance and current time must be positive."
+    )
+    if (rawBody.size > 8388608) return stripeWebhookFailure(
+        "payload_too_large", "Webhook body exceeds the configured limit."
+    )
+    val parsedHeader = stripeSignatureParse(signatureHeader)
+    if (!parsedHeader.valid) return stripeWebhookFailure(
+        "malformed_header", "Stripe-Signature header is malformed."
+    )
+    var signatureMatched = false
+    var timestampMatched = false
+    var timestampIndex = 0
+    while (timestampIndex < parsedHeader.timestamps.size) {
+        val timestamp = parsedHeader.timestamps[timestampIndex]
+        val difference = if (timestamp > nowUnixSeconds)
+            timestamp - nowUnixSeconds else nowUnixSeconds - timestamp
+        if (difference <= toleranceSeconds) {
+            timestampMatched = true
+            var secretIndex = 0
+            while (secretIndex < secrets.size) {
+                if (secrets[secretIndex] != "") {
+                    val expected = hexEncode(hmacSha256(
+                        secrets[secretIndex], "$timestamp.$rawBody"
+                    ))
+                    var signatureIndex = 0
+                    while (signatureIndex < parsedHeader.signatures.size) {
+                        if (constantTimeEquals(
+                            expected, parsedHeader.signatures[signatureIndex]
+                        )) signatureMatched = true
+                        signatureIndex = signatureIndex + 1
+                    }
+                }
+                secretIndex = secretIndex + 1
+            }
+        }
+        timestampIndex = timestampIndex + 1
+    }
+    if (!timestampMatched) return stripeWebhookFailure(
+        "stale_timestamp", "Webhook timestamp is outside the accepted window."
+    )
+    if (!signatureMatched) return stripeWebhookFailure(
+        "invalid_signature", "Webhook signature does not match."
+    )
+    val parsed = jsonParse(rawBody, JsonLimits(
+        8388608, 96, 250000, 8388608, 50000, true
+    ))
+    if (!parsed.succeeded) return stripeWebhookFailure(
+        "invalid_json", "Verified webhook body is not valid JSON."
+    )
+    if (!parsed.value.isObject() ||
+        parsed.value.getString("object") != "event" ||
+        parsed.value.getString("id") == "" ||
+        parsed.value.getString("type") == "" ||
+        !parsed.value.get("created").isNumber() ||
+        !parsed.value.get("livemode").isBoolean() ||
+        !parsed.value.get("data").get("object").isObject()) {
+        return stripeWebhookFailure(
+            "invalid_event", "Verified webhook body is not a Stripe event envelope."
+        )
+    }
+    StripeWebhookResult(
+        true, stripeEvent(parsed.value), parsed.value, StripeWebhookError("", "")
+    )
+}
+
+fun stripeWebhookGenerateTestHeader(
+    rawBody: string,
+    secret: string,
+    timestamp: int
+): string = "t=$timestamp,v1=${hexEncode(hmacSha256(secret, "$timestamp.$rawBody"))}"

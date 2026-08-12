@@ -1,0 +1,458 @@
+import "client.ab"
+import "resources.ab"
+
+class StripeCustomerResult(
+    val succeeded: bool,
+    val customer: StripeCustomer,
+    val response: StripeResult
+)
+
+class StripeCheckoutSessionResult(
+    val succeeded: bool,
+    val session: StripeCheckoutSession,
+    val response: StripeResult
+)
+
+class StripeBillingPortalSessionResult(
+    val succeeded: bool,
+    val session: StripeBillingPortalSession,
+    val response: StripeResult
+)
+
+class StripeSubscriptionResult(
+    val succeeded: bool,
+    val subscription: StripeSubscription,
+    val response: StripeResult
+)
+
+class StripeProductResult(
+    val succeeded: bool,
+    val product: StripeProduct,
+    val response: StripeResult
+)
+
+class StripePriceResult(
+    val succeeded: bool,
+    val price: StripePrice,
+    val response: StripeResult
+)
+
+class StripeEventResult(
+    val succeeded: bool,
+    val event: StripeEvent,
+    val response: StripeResult
+)
+
+class StripeListResult(
+    val succeeded: bool,
+    val page: StripeList,
+    val response: StripeResult
+)
+
+class StripeCollectionResult(
+    val succeeded: bool,
+    val data: array<Json>,
+    val hasMore: bool,
+    val response: StripeResult
+)
+
+fun stripeEmptyResult(): StripeResult = stripeFailure(
+    "configuration_error", "Stripe request was not made."
+)
+
+fun stripeEmptyCustomer(): StripeCustomer = stripeCustomer(jsonObject([], []))
+fun stripeEmptyCheckoutSession(): StripeCheckoutSession =
+    stripeCheckoutSession(jsonObject([], []))
+fun stripeEmptyPortalSession(): StripeBillingPortalSession =
+    stripeBillingPortalSession(jsonObject([], []))
+fun stripeEmptySubscription(): StripeSubscription =
+    stripeSubscription(jsonObject([], []))
+fun stripeEmptyProduct(): StripeProduct = stripeProduct(jsonObject([], []))
+fun stripeEmptyPrice(): StripePrice = stripePrice(jsonObject([], []))
+fun stripeEmptyList(): StripeList = stripeList(jsonObject([], []))
+
+fun stripeExpectedResponse(
+    result: StripeResult,
+    objectName: string,
+    idPrefix: string
+): StripeResult {
+    if (!result.succeeded) return result
+    val id = result.value.getString("id")
+    val isList = objectName == "list"
+    val valid = result.value.isObject() &&
+        result.value.getString("object") == objectName &&
+        ((isList && result.value.get("data").isArray() &&
+          result.value.get("has_more").isBoolean() &&
+          result.value.get("url").isString()) ||
+         (!isList && id.size > idPrefix.size &&
+          id.slice(0, idPrefix.size) == idPrefix))
+    if (valid) return result
+    StripeResult(
+        false, result.value, result.body, result.status, result.requestId,
+        result.apiVersion, result.idempotencyKey, result.retries,
+        result.rateLimitedReason,
+        StripeError(
+            "parse_error", "Stripe response does not match the expected resource.",
+            "", "", "", "", "", "", "", result.status,
+            result.requestId, false, result.value
+        )
+    )
+}
+
+fun stripePaginationFailure(
+    message: string,
+    previous: StripeResult = stripeEmptyResult()
+): StripeResult = StripeResult(
+    false, previous.value, previous.body, previous.status, previous.requestId,
+    previous.apiVersion, previous.idempotencyKey, previous.retries,
+    previous.rateLimitedReason,
+    StripeError(
+        "pagination_error", message, "", "", "", "", "", "", "",
+        previous.status, previous.requestId, false, previous.value
+    )
+)
+
+fun StripeClient.collectList(
+    path: string,
+    params: StripeParams,
+    maximumItems: int,
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeCollectionResult {
+    val items: array<Json> = []
+    if (maximumItems <= 0 || maximumItems > 10000 ||
+        !stripePathValid(path) || params.has("starting_after") ||
+        params.has("ending_before")) return StripeCollectionResult(
+        false, items, false, stripePaginationFailure(
+            "Pagination requires a valid path, a 1..10000 item bound and no caller cursor."
+        )
+    )
+    var cursor = ""
+    var previousCursor = ""
+    var hasMore = true
+    var last = stripeEmptyResult()
+    while (hasMore && items.size < maximumItems) {
+        val pageParams = params.copy()
+        if (!pageParams.has("limit")) {
+            val remaining = maximumItems - items.size
+            pageParams.addInt("limit", if (remaining < 100) remaining else 100)
+        }
+        if (cursor != "") pageParams.add("starting_after", cursor)
+        last = stripeExpectedResponse(
+            this.rawRequest("GET", path, pageParams, options), "list", ""
+        )
+        if (!last.succeeded) return StripeCollectionResult(
+            false, items, false, last
+        )
+        val page = stripeList(last.value)
+        var index = 0
+        while (index < page.data.size && items.size < maximumItems) {
+            items.append(page.data[index])
+            index = index + 1
+        }
+        hasMore = page.hasMore
+        if (hasMore) {
+            if (page.data.size == 0) return StripeCollectionResult(
+                false, items, false, stripePaginationFailure(
+                    "Stripe returned has_more with an empty page.", last
+                )
+            )
+            previousCursor = cursor
+            cursor = page.data[page.data.size - 1].getString("id")
+            if (cursor == "" || cursor == previousCursor) return StripeCollectionResult(
+                false, items, false, stripePaginationFailure(
+                    "Stripe pagination cursor is missing or repeated.", last
+                )
+            )
+        }
+    }
+    StripeCollectionResult(true, items, hasMore, last)
+}
+
+fun stripeResourcePath(prefix: string, id: string): string {
+    var valid = id.size > 3
+    var index = 0
+    while (valid && index < id.size) {
+        val byte = id[index]
+        if (!stripeUnreserved(byte)) valid = false
+        index = index + 1
+    }
+    if (valid) "$prefix/${stripePercentEncode(id)}" else ""
+}
+
+fun stripeMutationOptionsValid(options: StripeRequestOptions): bool =
+    options.idempotencyKey != "" &&
+    stripeIdempotencyKeyValid(options.idempotencyKey)
+
+fun StripeClient.customersCreate(
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeCustomerResult {
+    if (!stripeMutationOptionsValid(options)) return StripeCustomerResult(
+        false, stripeEmptyCustomer(), stripeFailure(
+            "configuration_error", "Customer creation requires an idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", "/v1/customers", params, options),
+        "customer", "cus_"
+    )
+    StripeCustomerResult(result.succeeded, stripeCustomer(result.value), result)
+}
+
+fun StripeClient.customersRetrieve(
+    id: string,
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeCustomerResult {
+    val path = stripeResourcePath("/v1/customers", id)
+    if (path == "") return StripeCustomerResult(
+        false, stripeEmptyCustomer(), stripeFailure(
+            "configuration_error", "Invalid Stripe Customer identifier."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", path, params, options), "customer", "cus_"
+    )
+    StripeCustomerResult(result.succeeded, stripeCustomer(result.value), result)
+}
+
+fun StripeClient.customersUpdate(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeCustomerResult {
+    val path = stripeResourcePath("/v1/customers", id)
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripeCustomerResult(
+        false, stripeEmptyCustomer(), stripeFailure(
+            "configuration_error", "Customer update requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "customer", "cus_"
+    )
+    StripeCustomerResult(result.succeeded, stripeCustomer(result.value), result)
+}
+
+fun StripeClient.customersList(
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeListResult {
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", "/v1/customers", params, options), "list", ""
+    )
+    StripeListResult(result.succeeded, stripeList(result.value), result)
+}
+
+fun StripeClient.checkoutSessionsCreate(
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeCheckoutSessionResult {
+    if (!stripeMutationOptionsValid(options)) return StripeCheckoutSessionResult(
+        false, stripeEmptyCheckoutSession(), stripeFailure(
+            "configuration_error", "Checkout Session creation requires an idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", "/v1/checkout/sessions", params, options),
+        "checkout.session", "cs_"
+    )
+    StripeCheckoutSessionResult(
+        result.succeeded, stripeCheckoutSession(result.value), result
+    )
+}
+
+fun StripeClient.checkoutSessionsRetrieve(
+    id: string,
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeCheckoutSessionResult {
+    val path = stripeResourcePath("/v1/checkout/sessions", id)
+    if (path == "") return StripeCheckoutSessionResult(
+        false, stripeEmptyCheckoutSession(), stripeFailure(
+            "configuration_error", "Invalid Checkout Session identifier."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", path, params, options), "checkout.session", "cs_"
+    )
+    StripeCheckoutSessionResult(
+        result.succeeded, stripeCheckoutSession(result.value), result
+    )
+}
+
+fun StripeClient.checkoutSessionsList(
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeListResult {
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", "/v1/checkout/sessions", params, options),
+        "list", ""
+    )
+    StripeListResult(result.succeeded, stripeList(result.value), result)
+}
+
+fun StripeClient.billingPortalSessionsCreate(
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeBillingPortalSessionResult {
+    if (!stripeMutationOptionsValid(options)) return StripeBillingPortalSessionResult(
+        false, stripeEmptyPortalSession(), stripeFailure(
+            "configuration_error", "Portal Session creation requires an idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", "/v1/billing_portal/sessions", params, options),
+        "billing_portal.session", "bps_"
+    )
+    StripeBillingPortalSessionResult(
+        result.succeeded, stripeBillingPortalSession(result.value), result
+    )
+}
+
+fun StripeClient.subscriptionsRetrieve(
+    id: string,
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeSubscriptionResult {
+    val path = stripeResourcePath("/v1/subscriptions", id)
+    if (path == "") return StripeSubscriptionResult(
+        false, stripeEmptySubscription(), stripeFailure(
+            "configuration_error", "Invalid Stripe Subscription identifier."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", path, params, options), "subscription", "sub_"
+    )
+    StripeSubscriptionResult(
+        result.succeeded, stripeSubscription(result.value), result
+    )
+}
+
+fun StripeClient.subscriptionsUpdate(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeSubscriptionResult {
+    val path = stripeResourcePath("/v1/subscriptions", id)
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripeSubscriptionResult(
+        false, stripeEmptySubscription(), stripeFailure(
+            "configuration_error", "Subscription update requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "subscription", "sub_"
+    )
+    StripeSubscriptionResult(
+        result.succeeded, stripeSubscription(result.value), result
+    )
+}
+
+fun StripeClient.subscriptionsCancel(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeSubscriptionResult {
+    val path = stripeResourcePath("/v1/subscriptions", id)
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripeSubscriptionResult(
+        false, stripeEmptySubscription(), stripeFailure(
+            "configuration_error", "Subscription cancellation requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("DELETE", path, params, options), "subscription", "sub_"
+    )
+    StripeSubscriptionResult(
+        result.succeeded, stripeSubscription(result.value), result
+    )
+}
+
+fun StripeClient.subscriptionsList(
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeListResult {
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", "/v1/subscriptions", params, options), "list", ""
+    )
+    StripeListResult(result.succeeded, stripeList(result.value), result)
+}
+
+fun StripeClient.productsRetrieve(
+    id: string,
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeProductResult {
+    val path = stripeResourcePath("/v1/products", id)
+    if (path == "") return StripeProductResult(
+        false, stripeEmptyProduct(), stripeFailure(
+            "configuration_error", "Invalid Stripe Product identifier."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", path, params, options), "product", "prod_"
+    )
+    StripeProductResult(result.succeeded, stripeProduct(result.value), result)
+}
+
+fun StripeClient.productsList(
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeListResult {
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", "/v1/products", params, options), "list", ""
+    )
+    StripeListResult(result.succeeded, stripeList(result.value), result)
+}
+
+fun StripeClient.pricesRetrieve(
+    id: string,
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripePriceResult {
+    val path = stripeResourcePath("/v1/prices", id)
+    if (path == "") return StripePriceResult(
+        false, stripeEmptyPrice(), stripeFailure(
+            "configuration_error", "Invalid Stripe Price identifier."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", path, params, options), "price", "price_"
+    )
+    StripePriceResult(result.succeeded, stripePrice(result.value), result)
+}
+
+fun StripeClient.pricesList(
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeListResult {
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", "/v1/prices", params, options), "list", ""
+    )
+    StripeListResult(result.succeeded, stripeList(result.value), result)
+}
+
+fun StripeClient.eventsRetrieve(
+    id: string,
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeEventResult {
+    val path = stripeResourcePath("/v1/events", id)
+    if (path == "") return StripeEventResult(
+        false, stripeEmptyEvent(), stripeFailure(
+            "configuration_error", "Invalid Stripe Event identifier."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", path, params, options), "event", "evt_"
+    )
+    StripeEventResult(result.succeeded, stripeEvent(result.value), result)
+}
+
+fun StripeClient.eventsList(
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeListResult {
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", "/v1/events", params, options), "list", ""
+    )
+    StripeListResult(result.succeeded, stripeList(result.value), result)
+}

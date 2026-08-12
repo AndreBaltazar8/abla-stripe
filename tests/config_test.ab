@@ -1,0 +1,12 @@
+import "../src/stripe.ab"
+
+fun main: int {
+    val expected = stripeEnvironment("STRIPE_CONFIG_EXPECTED_KEY", "")
+    val config = stripeConfigFromEnvironment()
+    if (config.secretKey != expected) return 1
+    if (config.apiVersion != "2026-07-29.dahlia") return 2
+    if (config.timeoutMilliseconds != 4242) return 3
+    if (config.maximumNetworkRetries != 3) return 4
+    if (!config.telemetry || !config.valid()) return 5
+    0
+}
