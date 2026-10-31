@@ -16,6 +16,8 @@ check:
 	$(COMPILER) build tests/client_test.ab -o build/client-test --fast --no-cache
 	$(COMPILER) build tests/safety_test.ab -o build/safety-test --fast --no-cache
 	$(COMPILER) build tests/resources_test.ab -o build/resources-test --fast --no-cache
+	$(COMPILER) build tests/payments_resources_test.ab -o build/payments-resources-test --fast --no-cache
+	$(COMPILER) build tests/payments_services_test.ab -o build/payments-services-test --fast --no-cache
 	$(COMPILER) build tests/config_test.ab -o build/config-test --fast --no-cache
 	$(COMPILER) build tests/integration_test.ab -o build/integration-test --fast --no-cache
 	build/form-test
@@ -26,6 +28,8 @@ check:
 	build/client-test
 	build/safety-test
 	build/resources-test
+	build/payments-resources-test
+	build/payments-services-test
 	STRIPE_SECRET_KEY_FILE="$(CURDIR)/tests/secret_key_fixture.txt" \
 		STRIPE_CONFIG_EXPECTED_KEY="sk_test_secret_from_file" \
 		STRIPE_TIMEOUT_MS=4242 STRIPE_MAX_NETWORK_RETRIES=3 \

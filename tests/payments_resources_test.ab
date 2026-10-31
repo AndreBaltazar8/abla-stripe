@@ -1,0 +1,216 @@
+import "abla/sys/linux"
+import "../src/stripe.ab"
+
+// Fixtures are read relative to the repository root, where the Makefile runs tests.
+fun stripeFixture(name: string): Json =
+    jsonParse(linuxReadFile("tests/fixtures/$name.json", 1048576)).value
+
+fun checkPaymentIntent(): int {
+    val fixture = stripeFixture("payment_intent")
+    val intent = stripePaymentIntent(fixture)
+    if (intent.id != "pi_1PgafyB7WZ01zgkWSjxsAJo3" ||
+        intent.status != "requires_payment_method") return 1
+    if (intent.amount != 1099 || intent.amountCapturable != 0 ||
+        intent.amountReceived != 0 || intent.currency != "usd") return 2
+    if (intent.customerId != "" || intent.paymentMethodId != "" ||
+        intent.latestChargeId != "" || intent.receiptEmail != "") return 3
+    if (intent.captureMethod != "automatic" ||
+        intent.clientSecret != "pi_1PgafyB7WZ01zgkWSjxsAJo3_secret_Dm43xiq1k0ywrRRjDoi8y1gkM") return 4
+    if (intent.canceledAt != 1234567890 || intent.created != 1234567890 ||
+        intent.cancellationReason != "" || intent.livemode) return 5
+    if (!intent.metadata.isObject() ||
+        intent.raw.get("automatic_payment_methods").get("enabled").asBoolean() != true) return 6
+    val expanded = stripePaymentIntent(jsonParse(#$jsons {
+        "id": "pi_1", "customer": {"id": "cus_1", "object": "customer"},
+        "payment_method": {"id": "pm_1"}, "latest_charge": {"id": "ch_1"},
+        "cancellation_reason": "abandoned", "metadata": {"order": "o1"}
+    }).value)
+    if (expanded.customerId != "cus_1" || expanded.paymentMethodId != "pm_1" ||
+        expanded.latestChargeId != "ch_1" ||
+        expanded.cancellationReason != "abandoned" ||
+        expanded.metadata.getString("order") != "o1") return 7
+    0
+}
+
+fun checkCharge(): int {
+    val charge = stripeCharge(stripeFixture("charge"))
+    if (charge.id != "ch_1PgafuB7WZ01zgkWXYmPNZs8" || charge.status != "succeeded") return 11
+    if (charge.amount != 100 || charge.amountCaptured != 0 ||
+        charge.amountRefunded != 0 || charge.currency != "usd") return 12
+    if (charge.captured || !charge.paid || charge.refunded || charge.disputed) return 13
+    if (charge.customerId != "" || charge.paymentIntentId != "" ||
+        charge.paymentMethodId != "card_1PgaftB7WZ01zgkWm3waTcFp" ||
+        charge.balanceTransactionId != "txn_1PgaxNB7WZ01zgkWEV3TLf40") return 14
+    if (charge.description != "My First Test Charge (created for API docs)" ||
+        charge.failureCode != "" || charge.failureMessage != "" ||
+        charge.receiptUrl.size < 8 || charge.receiptUrl.slice(0, 8) != "https://") return 15
+    if (charge.created != 1234567890 || charge.livemode) return 16
+    if (charge.raw.get("billing_details").getString("name") != "Jenny Rosen") return 17
+    val expanded = stripeCharge(jsonParse(#$jsons {
+        "id": "ch_2", "customer": {"id": "cus_1"},
+        "payment_intent": {"id": "pi_1"},
+        "balance_transaction": {"id": "txn_1", "object": "balance_transaction"},
+        "failure_code": "card_declined", "failure_message": "Your card was declined."
+    }).value)
+    if (expanded.customerId != "cus_1" || expanded.paymentIntentId != "pi_1" ||
+        expanded.balanceTransactionId != "txn_1" ||
+        expanded.failureCode != "card_declined" ||
+        expanded.failureMessage != "Your card was declined.") return 18
+    0
+}
+
+fun checkInvoice(): int {
+    val invoice = stripeInvoice(stripeFixture("invoice"))
+    if (invoice.id != "in_1Pgc6tB7WZ01zgkWu9fdqL6I" || invoice.number != "" ||
+        invoice.status != "draft") return 21
+    if (invoice.collectionMethod != "charge_automatically" ||
+        invoice.billingReason != "manual" || invoice.currency != "usd") return 22
+    if (invoice.customerId != "cus_QXg1o8vcGmoR32" || invoice.customerName != "" ||
+        invoice.customerEmail != "" || invoice.subscriptionId != "subscription") return 23
+    if (invoice.subtotal != 1000 || invoice.total != 1000 ||
+        invoice.totalExcludingTax != 1000 || invoice.amountDue != 1000 ||
+        invoice.amountPaid != 0 || invoice.amountRemaining != 1000) return 24
+    if (invoice.dueDate != 1234567890 || invoice.periodStart != 1234567890 ||
+        invoice.periodEnd != 1234567890 || invoice.effectiveAt != 1234567890 ||
+        invoice.finalizedAt != 0 || invoice.paidAt != 0 || invoice.voidedAt != 0) return 25
+    if (invoice.hostedInvoiceUrl != "" || invoice.invoicePdf != "" ||
+        invoice.deleted || invoice.livemode) return 26
+    if (invoice.lines.size != 1 || invoice.linesHasMore) return 27
+    val line = invoice.lines[0]
+    if (line.id != "il_1Pgc6sB7WZ01zgkWFnxLrLCq" || line.amount != 1000 ||
+        line.subtotal != 2060319484 || line.currency != "usd" || line.quantity != 1) return 28
+    if (line.description != "My First Invoice Item (created for API docs)" ||
+        line.periodStart != 1721954054 || line.periodEnd != 1721954054 ||
+        line.priceId != "" || line.unitAmountDecimal != "" ||
+        line.subscriptionId != "" || line.livemode) return 29
+    val paid = stripeInvoice(jsonParse(#$jsons {
+        "id": "in_2", "object": "invoice", "number": "ABC-0001", "status": "paid",
+        "customer": {"id": "cus_1"},
+        "parent": {"subscription_details": {"subscription": {"id": "sub_1"}}},
+        "status_transitions": {"finalized_at": 10, "paid_at": 20, "voided_at": null},
+        "lines": {"has_more": true, "data": [{
+            "id": "il_1", "subscription": {"id": "sub_1"},
+            "pricing": {"type": "price_details", "unit_amount_decimal": "12.5",
+                "price_details": {"price": "price_1", "product": "prod_1"}}
+        }]}
+    }).value)
+    if (paid.number != "ABC-0001" || paid.customerId != "cus_1" ||
+        paid.subscriptionId != "sub_1" || paid.finalizedAt != 10 ||
+        paid.paidAt != 20 || paid.voidedAt != 0 || !paid.linesHasMore) return 30
+    if (paid.lines[0].priceId != "price_1" ||
+        paid.lines[0].unitAmountDecimal != "12.5" ||
+        paid.lines[0].subscriptionId != "sub_1") return 31
+    val deleted = stripeInvoice(jsonParse(#$jsons {
+        "id": "in_3", "object": "invoice", "deleted": true
+    }).value)
+    if (!deleted.deleted || deleted.lines.size != 0) return 32
+    0
+}
+
+fun checkRefund(): int {
+    val refund = stripeRefund(stripeFixture("refund"))
+    if (refund.id != "re_1Pgc72B7WZ01zgkWqPvrRrPE" || refund.status != "succeeded" ||
+        refund.amount != 100 || refund.currency != "usd") return 41
+    if (refund.chargeId != "ch_1PgafuB7WZ01zgkWXYmPNZs8" ||
+        refund.paymentIntentId != "" || refund.balanceTransactionId != "") return 42
+    if (refund.reason != "" || refund.failureReason != "" ||
+        refund.pendingReason != "" || refund.receiptNumber != "" ||
+        refund.created != 1234567890) return 43
+    val expanded = stripeRefund(jsonParse(#$jsons {
+        "id": "re_2", "charge": {"id": "ch_1"}, "payment_intent": {"id": "pi_1"},
+        "balance_transaction": {"id": "txn_1"}, "reason": "duplicate",
+        "failure_reason": "expired_or_canceled_card", "pending_reason": "processing"
+    }).value)
+    if (expanded.chargeId != "ch_1" || expanded.paymentIntentId != "pi_1" ||
+        expanded.balanceTransactionId != "txn_1" || expanded.reason != "duplicate" ||
+        expanded.failureReason != "expired_or_canceled_card" ||
+        expanded.pendingReason != "processing") return 44
+    0
+}
+
+fun checkBalanceTransaction(): int {
+    val transaction = stripeBalanceTransaction(stripeFixture("balance_transaction"))
+    if (transaction.id != "txn_1PgaxNB7WZ01zgkWEV3TLf40" ||
+        transaction.transactionType != "charge" || transaction.status != "available") return 51
+    if (transaction.reportingCategory != "charge" ||
+        transaction.balanceType != "payments" || transaction.currency != "usd") return 52
+    if (transaction.amount != 100 || transaction.fee != 0 || transaction.net != 100 ||
+        transaction.exchangeRate != "" || transaction.feeDetails.size != 0) return 53
+    if (transaction.sourceId != "ch_1PgafuB7WZ01zgkWXYmPNZs8" ||
+        transaction.availableOn != 1234567890 || transaction.created != 1234567890) return 54
+    // A refund's transaction: negative amounts, expanded source, an exact rate.
+    val refund = stripeBalanceTransaction(jsonParse("{\"id\":\"txn_2\",\"type\":\"refund\",\"amount\":-2500,\"fee\":35,\"net\":-2535,\"exchange_rate\":1.08730,\"source\":{\"id\":\"re_1\",\"object\":\"refund\"},\"fee_details\":[{\"amount\":35,\"application\":null,\"currency\":\"eur\",\"description\":\"Stripe processing fees\",\"type\":\"stripe_fee\"},{\"amount\":0,\"application\":\"ca_1\",\"currency\":\"eur\",\"description\":null,\"type\":\"application_fee\"}]}").value)
+    if (refund.amount != -2500 || refund.fee != 35 || refund.net != -2535) return 55
+    if (refund.exchangeRate != "1.08730" || refund.sourceId != "re_1") return 56
+    if (refund.feeDetails.size != 2 || refund.feeDetails[0].amount != 35 ||
+        refund.feeDetails[0].feeType != "stripe_fee" ||
+        refund.feeDetails[0].currency != "eur" ||
+        refund.feeDetails[0].description != "Stripe processing fees" ||
+        refund.feeDetails[0].application != "" ||
+        refund.feeDetails[1].application != "ca_1") return 57
+    0
+}
+
+fun checkDispute(): int {
+    val dispute = stripeDispute(stripeFixture("dispute"))
+    if (dispute.id != "dp_1Pgc71B7WZ01zgkWMevJiAUx" ||
+        dispute.status != "warning_needs_response" || dispute.reason != "general") return 61
+    if (dispute.amount != 1000 || dispute.currency != "usd" ||
+        dispute.chargeId != "ch_1PgafuB7WZ01zgkWXYmPNZs8" ||
+        dispute.paymentIntentId != "") return 62
+    if (!dispute.isChargeRefundable || dispute.evidenceDueBy != 1723679999 ||
+        dispute.hasEvidence || dispute.pastDue || dispute.submissionCount != 0) return 63
+    if (dispute.balanceTransactions.size != 0 || dispute.created != 1234567890 ||
+        dispute.livemode) return 64
+    val lost = stripeDispute(jsonParse(#$jsons {
+        "id": "dp_2", "status": "lost", "charge": {"id": "ch_1"},
+        "payment_intent": {"id": "pi_1"},
+        "balance_transactions": [
+            {"id": "txn_1", "amount": -1000, "fee": 1500, "net": -2500}
+        ]
+    }).value)
+    if (lost.chargeId != "ch_1" || lost.paymentIntentId != "pi_1" ||
+        lost.balanceTransactions.size != 1 ||
+        lost.balanceTransactions[0].net != -2500) return 65
+    0
+}
+
+fun checkPayout(): int {
+    val payout = stripePayout(stripeFixture("payout"))
+    if (payout.id != "po_1Pgc79B7WZ01zgkWu1KToYf4" || payout.status != "in_transit" ||
+        payout.payoutType != "bank_account" || payout.method != "standard") return 71
+    if (payout.sourceType != "card" || payout.amount != 1100 ||
+        payout.currency != "usd" || payout.arrivalDate != 1234567890 ||
+        !payout.automatic) return 72
+    if (payout.destinationId != "ba_1Pgc79B7WZ01zgkWoU5vBiXt" ||
+        payout.balanceTransactionId != "txn_1PgaxNB7WZ01zgkWEV3TLf40" ||
+        payout.failureBalanceTransactionId != "" || payout.failureCode != "" ||
+        payout.failureMessage != "") return 73
+    if (payout.originalPayoutId != "" || payout.reversedById != "" ||
+        payout.reconciliationStatus != "completed" ||
+        payout.description != "STRIPE PAYOUT" || payout.statementDescriptor != "" ||
+        payout.created != 1234567890 || payout.livemode) return 74
+    val reversed = stripePayout(jsonParse(#$jsons {
+        "id": "po_2", "destination": {"id": "ba_1"},
+        "balance_transaction": {"id": "txn_1"},
+        "failure_balance_transaction": {"id": "txn_2"},
+        "failure_code": "account_closed", "original_payout": "po_0",
+        "reversed_by": {"id": "po_3"}
+    }).value)
+    if (reversed.destinationId != "ba_1" || reversed.balanceTransactionId != "txn_1" ||
+        reversed.failureBalanceTransactionId != "txn_2" ||
+        reversed.failureCode != "account_closed" ||
+        reversed.originalPayoutId != "po_0" || reversed.reversedById != "po_3") return 75
+    0
+}
+
+fun main: int {
+    var result = checkPaymentIntent()
+    if (result == 0) result = checkCharge()
+    if (result == 0) result = checkInvoice()
+    if (result == 0) result = checkRefund()
+    if (result == 0) result = checkBalanceTransaction()
+    if (result == 0) result = checkDispute()
+    if (result == 0) result = checkPayout()
+    result
+}

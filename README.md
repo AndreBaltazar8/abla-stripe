@@ -25,6 +25,8 @@ The release includes:
 - structured errors, response bodies, request IDs and rate-limit reasons;
 - typed Customers, Checkout Sessions, Billing Portal Sessions, Subscriptions,
   Products, Prices and Events;
+- typed Payment Intents, Charges, Invoices, Refunds, Disputes, Balance
+  Transactions and Payouts;
 - bounded cursor pagination;
 - constant-time, replay-bounded, multi-secret webhook verification; and
 - a guarded raw `/v1/` request API for endpoints not yet represented by a typed
@@ -151,6 +153,41 @@ val session = stripe.billingPortalSessionsCreate(
 The application must still allow-list returned Checkout and Portal URL origins
 before redirecting a browser.
 
+## Payments and reconciliation
+
+Each resource has a typed class and a parser for list entries or webhook
+objects (`stripeCharge(event.dataObject)`, say):
+
+| Resource | Methods |
+| --- | --- |
+| Payment Intents | `paymentIntentsCreate`, `Retrieve`, `Update`, `List`, `Confirm`, `Capture`, `Cancel` |
+| Charges | `chargesCreate`, `Retrieve`, `Update`, `List`, `Capture` |
+| Invoices | `invoicesCreate`, `Retrieve`, `Update`, `List`, `Delete`, `Finalize`, `Pay`, `Send`, `Void`, `MarkUncollectible`, and `invoiceLinesList` |
+| Refunds | `refundsCreate`, `Retrieve`, `Update`, `List`, `Cancel` |
+| Disputes | `disputesRetrieve`, `Update`, `List`, `Close` |
+| Balance Transactions | `balanceTransactionsRetrieve`, `List` |
+| Payouts | `payoutsCreate`, `Retrieve`, `Update`, `List`, `Cancel`, `Reverse` |
+
+```abla
+val filters = stripeParams()
+filters.add("payout", payoutId)
+val page = stripe.balanceTransactionsList(filters)
+if (page.succeeded) {
+    for (entry in page.page.data) {
+        val transaction = stripeBalanceTransaction(entry)
+        // transaction.amount, .fee, .net, .feeDetails, .sourceId
+    }
+}
+```
+
+Amounts are integers in the currency's minor unit. A value Stripe sends as
+`null` reads as `""`, `0` or `false`; check `raw` where that distinction
+matters. An expanded object reads as its ID in the `...Id` fields and stays whole
+in `raw`. `exchangeRate` is the number's exact text, never a float. An invoice
+embeds only its first lines: when `linesHasMore` is set, read the rest with
+`invoiceLinesList`. Fields not listed on a class, such as invoice taxes, are in
+`raw`. Every mutation requires an idempotency key, including the actions.
+
 ## Request options and retries
 
 `StripeRequestOptions` can set an idempotency key, `Stripe-Account`, an API
@@ -253,8 +290,9 @@ make test
 ```
 
 `make check` compiles and runs deterministic encoding, client, retry, resource,
-pagination and webhook fixtures. `make test` also starts a temporary loopback
-HTTP server and verifies the exact request protocol over a real socket. No
+pagination and webhook fixtures, including Stripe's published examples in
+`tests/fixtures`. `make test` also starts a temporary loopback HTTP server and
+verifies the exact request protocol over a real socket. No
 Stripe credential or network connection is needed.
 
 ## Scope

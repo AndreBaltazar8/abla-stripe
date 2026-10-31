@@ -143,6 +143,350 @@ fun stripeEvent(value: Json): StripeEvent = StripeEvent(
     value.get("data").get("object"), value
 )
 
+class StripePaymentIntent(
+    val id: string,
+    val status: string,
+    val amount: int,
+    val amountCapturable: int,
+    val amountReceived: int,
+    val currency: string,
+    val customerId: string,
+    val paymentMethodId: string,
+    val latestChargeId: string,
+    val captureMethod: string,
+    // Hand this to the browser for the one customer paying; don't log or store it.
+    val clientSecret: string,
+    val description: string,
+    val receiptEmail: string,
+    val cancellationReason: string,
+    val canceledAt: int,
+    val created: int,
+    val livemode: bool,
+    val metadata: Json,
+    val raw: Json
+)
+
+fun stripePaymentIntent(value: Json): StripePaymentIntent = StripePaymentIntent(
+    value.getString("id"), value.getString("status"), value.getInt("amount"),
+    value.getInt("amount_capturable"), value.getInt("amount_received"),
+    value.getString("currency"), stripeExpandableId(value.get("customer")),
+    stripeExpandableId(value.get("payment_method")),
+    stripeExpandableId(value.get("latest_charge")),
+    value.getString("capture_method"), value.getString("client_secret"),
+    value.getString("description"), value.getString("receipt_email"),
+    value.getString("cancellation_reason"), value.getInt("canceled_at"),
+    value.getInt("created"), value.get("livemode").asBoolean(),
+    stripeJsonStringMap(value.get("metadata")), value
+)
+
+class StripeCharge(
+    val id: string,
+    val status: string,
+    val amount: int,
+    val amountCaptured: int,
+    val amountRefunded: int,
+    val currency: string,
+    val captured: bool,
+    val paid: bool,
+    val refunded: bool,
+    val disputed: bool,
+    val customerId: string,
+    val paymentIntentId: string,
+    val paymentMethodId: string,
+    val balanceTransactionId: string,
+    val description: string,
+    val failureCode: string,
+    val failureMessage: string,
+    val receiptUrl: string,
+    val created: int,
+    val livemode: bool,
+    val metadata: Json,
+    val raw: Json
+)
+
+fun stripeCharge(value: Json): StripeCharge = StripeCharge(
+    value.getString("id"), value.getString("status"), value.getInt("amount"),
+    value.getInt("amount_captured"), value.getInt("amount_refunded"),
+    value.getString("currency"), value.get("captured").asBoolean(),
+    value.get("paid").asBoolean(), value.get("refunded").asBoolean(),
+    value.get("disputed").asBoolean(), stripeExpandableId(value.get("customer")),
+    stripeExpandableId(value.get("payment_intent")),
+    stripeExpandableId(value.get("payment_method")),
+    stripeExpandableId(value.get("balance_transaction")),
+    value.getString("description"), value.getString("failure_code"),
+    value.getString("failure_message"), value.getString("receipt_url"),
+    value.getInt("created"), value.get("livemode").asBoolean(),
+    stripeJsonStringMap(value.get("metadata")), value
+)
+
+class StripeInvoiceLine(
+    val id: string,
+    val amount: int,
+    val subtotal: int,
+    val currency: string,
+    val description: string,
+    val quantity: int,
+    val priceId: string,
+    val unitAmountDecimal: string,
+    val periodStart: int,
+    val periodEnd: int,
+    val subscriptionId: string,
+    val livemode: bool,
+    val metadata: Json,
+    val raw: Json
+)
+
+fun stripeInvoiceLine(value: Json): StripeInvoiceLine {
+    val pricing = value.get("pricing")
+    val period = value.get("period")
+    return StripeInvoiceLine(
+        value.getString("id"), value.getInt("amount"), value.getInt("subtotal"),
+        value.getString("currency"), value.getString("description"),
+        value.getInt("quantity"),
+        stripeExpandableId(pricing.get("price_details").get("price")),
+        pricing.getString("unit_amount_decimal"), period.getInt("start"),
+        period.getInt("end"), stripeExpandableId(value.get("subscription")),
+        value.get("livemode").asBoolean(),
+        stripeJsonStringMap(value.get("metadata")), value
+    )
+}
+
+class StripeInvoice(
+    val id: string,
+    val number: string,
+    val status: string,
+    val collectionMethod: string,
+    val billingReason: string,
+    val currency: string,
+    val customerId: string,
+    val customerName: string,
+    val customerEmail: string,
+    val subscriptionId: string,
+    val subtotal: int,
+    val total: int,
+    val totalExcludingTax: int,
+    val amountDue: int,
+    val amountPaid: int,
+    val amountRemaining: int,
+    val dueDate: int,
+    val periodStart: int,
+    val periodEnd: int,
+    val effectiveAt: int,
+    val finalizedAt: int,
+    val paidAt: int,
+    val voidedAt: int,
+    val hostedInvoiceUrl: string,
+    val invoicePdf: string,
+    val lines: array<StripeInvoiceLine>,
+    // The invoice embeds only the first lines; invoiceLinesList reads the rest.
+    val linesHasMore: bool,
+    // Set on the answer to invoicesDelete.
+    val deleted: bool,
+    val created: int,
+    val livemode: bool,
+    val metadata: Json,
+    val raw: Json
+)
+
+fun stripeInvoice(value: Json): StripeInvoice {
+    val transitions = value.get("status_transitions")
+    val lines: array<StripeInvoiceLine> = []
+    val source = value.get("lines").get("data")
+    var index = 0
+    while (source.isArray() && index < source.size()) {
+        lines.append(stripeInvoiceLine(source.at(index)))
+        index = index + 1
+    }
+    return StripeInvoice(
+        value.getString("id"), value.getString("number"), value.getString("status"),
+        value.getString("collection_method"), value.getString("billing_reason"),
+        value.getString("currency"), stripeExpandableId(value.get("customer")),
+        value.getString("customer_name"), value.getString("customer_email"),
+        stripeExpandableId(
+            value.get("parent").get("subscription_details").get("subscription")
+        ),
+        value.getInt("subtotal"), value.getInt("total"),
+        value.getInt("total_excluding_tax"), value.getInt("amount_due"),
+        value.getInt("amount_paid"), value.getInt("amount_remaining"),
+        value.getInt("due_date"), value.getInt("period_start"),
+        value.getInt("period_end"), value.getInt("effective_at"),
+        transitions.getInt("finalized_at"), transitions.getInt("paid_at"),
+        transitions.getInt("voided_at"), value.getString("hosted_invoice_url"),
+        value.getString("invoice_pdf"), lines,
+        value.get("lines").get("has_more").asBoolean(),
+        value.get("deleted").asBoolean(), value.getInt("created"),
+        value.get("livemode").asBoolean(),
+        stripeJsonStringMap(value.get("metadata")), value
+    )
+}
+
+class StripeRefund(
+    val id: string,
+    val status: string,
+    val amount: int,
+    val currency: string,
+    val chargeId: string,
+    val paymentIntentId: string,
+    val balanceTransactionId: string,
+    val reason: string,
+    val failureReason: string,
+    val pendingReason: string,
+    val description: string,
+    val receiptNumber: string,
+    val created: int,
+    val metadata: Json,
+    val raw: Json
+)
+
+fun stripeRefund(value: Json): StripeRefund = StripeRefund(
+    value.getString("id"), value.getString("status"), value.getInt("amount"),
+    value.getString("currency"), stripeExpandableId(value.get("charge")),
+    stripeExpandableId(value.get("payment_intent")),
+    stripeExpandableId(value.get("balance_transaction")),
+    value.getString("reason"), value.getString("failure_reason"),
+    value.getString("pending_reason"), value.getString("description"),
+    value.getString("receipt_number"), value.getInt("created"),
+    stripeJsonStringMap(value.get("metadata")), value
+)
+
+class StripeFee(
+    val amount: int,
+    val currency: string,
+    val feeType: string,
+    val description: string,
+    val application: string,
+    val raw: Json
+)
+
+fun stripeFee(value: Json): StripeFee = StripeFee(
+    value.getInt("amount"), value.getString("currency"), value.getString("type"),
+    value.getString("description"), value.getString("application"), value
+)
+
+class StripeBalanceTransaction(
+    val id: string,
+    val transactionType: string,
+    val status: string,
+    val reportingCategory: string,
+    val balanceType: string,
+    val amount: int,
+    val fee: int,
+    val net: int,
+    val currency: string,
+    // The number exactly as Stripe wrote it, or "" when there is none.
+    val exchangeRate: string,
+    val feeDetails: array<StripeFee>,
+    val sourceId: string,
+    val description: string,
+    val availableOn: int,
+    val created: int,
+    val raw: Json
+)
+
+fun stripeBalanceTransaction(value: Json): StripeBalanceTransaction {
+    val fees: array<StripeFee> = []
+    val source = value.get("fee_details")
+    var index = 0
+    while (source.isArray() && index < source.size()) {
+        fees.append(stripeFee(source.at(index)))
+        index = index + 1
+    }
+    return StripeBalanceTransaction(
+        value.getString("id"), value.getString("type"), value.getString("status"),
+        value.getString("reporting_category"), value.getString("balance_type"),
+        value.getInt("amount"), value.getInt("fee"), value.getInt("net"),
+        value.getString("currency"), value.get("exchange_rate").asNumber().text,
+        fees, stripeExpandableId(value.get("source")),
+        value.getString("description"), value.getInt("available_on"),
+        value.getInt("created"), value
+    )
+}
+
+class StripeDispute(
+    val id: string,
+    val status: string,
+    val reason: string,
+    val amount: int,
+    val currency: string,
+    val chargeId: string,
+    val paymentIntentId: string,
+    val isChargeRefundable: bool,
+    val evidenceDueBy: int,
+    val hasEvidence: bool,
+    val pastDue: bool,
+    val submissionCount: int,
+    val balanceTransactions: array<StripeBalanceTransaction>,
+    val created: int,
+    val livemode: bool,
+    val metadata: Json,
+    val raw: Json
+)
+
+fun stripeDispute(value: Json): StripeDispute {
+    val details = value.get("evidence_details")
+    val transactions: array<StripeBalanceTransaction> = []
+    val source = value.get("balance_transactions")
+    var index = 0
+    while (source.isArray() && index < source.size()) {
+        transactions.append(stripeBalanceTransaction(source.at(index)))
+        index = index + 1
+    }
+    return StripeDispute(
+        value.getString("id"), value.getString("status"), value.getString("reason"),
+        value.getInt("amount"), value.getString("currency"),
+        stripeExpandableId(value.get("charge")),
+        stripeExpandableId(value.get("payment_intent")),
+        value.get("is_charge_refundable").asBoolean(), details.getInt("due_by"),
+        details.get("has_evidence").asBoolean(),
+        details.get("past_due").asBoolean(), details.getInt("submission_count"),
+        transactions, value.getInt("created"), value.get("livemode").asBoolean(),
+        stripeJsonStringMap(value.get("metadata")), value
+    )
+}
+
+class StripePayout(
+    val id: string,
+    val status: string,
+    val payoutType: string,
+    val method: string,
+    val sourceType: string,
+    val amount: int,
+    val currency: string,
+    val arrivalDate: int,
+    val automatic: bool,
+    val destinationId: string,
+    val balanceTransactionId: string,
+    val failureBalanceTransactionId: string,
+    val failureCode: string,
+    val failureMessage: string,
+    val originalPayoutId: string,
+    val reversedById: string,
+    val reconciliationStatus: string,
+    val statementDescriptor: string,
+    val description: string,
+    val created: int,
+    val livemode: bool,
+    val metadata: Json,
+    val raw: Json
+)
+
+fun stripePayout(value: Json): StripePayout = StripePayout(
+    value.getString("id"), value.getString("status"), value.getString("type"),
+    value.getString("method"), value.getString("source_type"),
+    value.getInt("amount"), value.getString("currency"),
+    value.getInt("arrival_date"), value.get("automatic").asBoolean(),
+    stripeExpandableId(value.get("destination")),
+    stripeExpandableId(value.get("balance_transaction")),
+    stripeExpandableId(value.get("failure_balance_transaction")),
+    value.getString("failure_code"), value.getString("failure_message"),
+    stripeExpandableId(value.get("original_payout")),
+    stripeExpandableId(value.get("reversed_by")),
+    value.getString("reconciliation_status"),
+    value.getString("statement_descriptor"), value.getString("description"),
+    value.getInt("created"), value.get("livemode").asBoolean(),
+    stripeJsonStringMap(value.get("metadata")), value
+)
+
 class StripeList(
     val data: array<Json>,
     val hasMore: bool,

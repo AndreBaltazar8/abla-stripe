@@ -1,0 +1,258 @@
+import "abla/sys/linux"
+import "../src/stripe.ab"
+
+var stripePaymentsExpectedMethod: string = ""
+var stripePaymentsExpectedPath: string = ""
+var stripePaymentsExpectIdempotency: bool = false
+var stripePaymentsStatus: int = 200
+var stripePaymentsBody: string = ""
+var stripePaymentsCalls: int = 0
+var stripePaymentsMismatch: bool = false
+
+fun stripePaymentsTransport(
+    request: HttpRequest,
+    maximum: int,
+    timeout: int
+): HttpClientResult {
+    stripePaymentsCalls = stripePaymentsCalls + 1
+    if (request.method != stripePaymentsExpectedMethod ||
+        request.path != stripePaymentsExpectedPath) stripePaymentsMismatch = true
+    val key = request.header("Idempotency-Key")
+    if ((stripePaymentsExpectIdempotency && key != "payments-fixture") ||
+        (!stripePaymentsExpectIdempotency && key != "")) stripePaymentsMismatch = true
+    HttpClientResult(HttpResponse(stripePaymentsStatus, [
+        HttpHeader("Request-Id", "req_payments")
+    ], stripePaymentsBody), true, true)
+}
+
+fun stripePaymentsNoWait(milliseconds: int): void {}
+
+fun stripePaymentsExpect(method: string, path: string, body: string): void {
+    stripePaymentsExpectedMethod = method
+    stripePaymentsExpectedPath = path
+    stripePaymentsExpectIdempotency = method != "GET"
+    stripePaymentsStatus = 200
+    stripePaymentsBody = body
+    return
+}
+
+fun stripePaymentsFixture(name: string): string =
+    linuxReadFile("tests/fixtures/$name.json", 1048576)
+
+fun checkPaymentIntents(var client: StripeClient, mutation: StripeRequestOptions, list: string): int {
+    val path = "/v1/payment_intents"
+    val id = "pi_1PgafyB7WZ01zgkWSjxsAJo3"
+    val body = stripePaymentsFixture("payment_intent")
+    stripePaymentsExpect("POST", path, body)
+    val created = client.paymentIntentsCreate(stripeParams(), mutation)
+    if (!created.succeeded || created.paymentIntent.amount != 1099) return 101
+    stripePaymentsExpect("GET", "$path/$id", body)
+    if (client.paymentIntentsRetrieve(id).paymentIntent.id != id) return 102
+    stripePaymentsExpect("POST", "$path/$id", body)
+    if (!client.paymentIntentsUpdate(id, stripeParams(), mutation).succeeded) return 103
+    stripePaymentsExpect("GET", path, list)
+    if (!client.paymentIntentsList().succeeded) return 104
+    stripePaymentsExpect("POST", "$path/$id/confirm", body)
+    if (!client.paymentIntentsConfirm(id, stripeParams(), mutation).succeeded) return 105
+    stripePaymentsExpect("POST", "$path/$id/capture", body)
+    if (!client.paymentIntentsCapture(id, stripeParams(), mutation).succeeded) return 106
+    stripePaymentsExpect("POST", "$path/$id/cancel", body)
+    if (!client.paymentIntentsCancel(id, stripeParams(), mutation).succeeded) return 107
+    0
+}
+
+fun checkCharges(var client: StripeClient, mutation: StripeRequestOptions, list: string): int {
+    val path = "/v1/charges"
+    val id = "ch_1PgafuB7WZ01zgkWXYmPNZs8"
+    val body = stripePaymentsFixture("charge")
+    stripePaymentsExpect("POST", path, body)
+    if (client.chargesCreate(stripeParams(), mutation).charge.amount != 100) return 111
+    stripePaymentsExpect("GET", "$path/$id", body)
+    if (client.chargesRetrieve(id).charge.id != id) return 112
+    stripePaymentsExpect("POST", "$path/$id", body)
+    if (!client.chargesUpdate(id, stripeParams(), mutation).succeeded) return 113
+    stripePaymentsExpect("GET", path, list)
+    if (!client.chargesList().succeeded) return 114
+    stripePaymentsExpect("POST", "$path/$id/capture", body)
+    if (!client.chargesCapture(id, stripeParams(), mutation).succeeded) return 115
+    // Charges that aren't card payments use another ID prefix.
+    stripePaymentsExpect("GET", "$path/py_123", "{\"id\":\"py_123\",\"object\":\"charge\"}")
+    if (client.chargesRetrieve("py_123").charge.id != "py_123") return 116
+    0
+}
+
+fun checkInvoices(var client: StripeClient, mutation: StripeRequestOptions, list: string): int {
+    val path = "/v1/invoices"
+    val id = "in_1Pgc6tB7WZ01zgkWu9fdqL6I"
+    val body = stripePaymentsFixture("invoice")
+    stripePaymentsExpect("POST", path, body)
+    if (client.invoicesCreate(stripeParams(), mutation).invoice.total != 1000) return 121
+    stripePaymentsExpect("GET", "$path/$id", body)
+    if (client.invoicesRetrieve(id).invoice.lines.size != 1) return 122
+    stripePaymentsExpect("POST", "$path/$id", body)
+    if (!client.invoicesUpdate(id, stripeParams(), mutation).succeeded) return 123
+    stripePaymentsExpect("GET", path, list)
+    if (!client.invoicesList().succeeded) return 124
+    stripePaymentsExpect("POST", "$path/$id/finalize", body)
+    if (!client.invoicesFinalize(id, stripeParams(), mutation).succeeded) return 125
+    stripePaymentsExpect("POST", "$path/$id/pay", body)
+    if (!client.invoicesPay(id, stripeParams(), mutation).succeeded) return 126
+    stripePaymentsExpect("POST", "$path/$id/send", body)
+    if (!client.invoicesSend(id, stripeParams(), mutation).succeeded) return 127
+    stripePaymentsExpect("POST", "$path/$id/void", body)
+    if (!client.invoicesVoid(id, stripeParams(), mutation).succeeded) return 128
+    stripePaymentsExpect("POST", "$path/$id/mark_uncollectible", body)
+    if (!client.invoicesMarkUncollectible(id, stripeParams(), mutation).succeeded) return 129
+    stripePaymentsExpect("DELETE", "$path/$id", "{\"id\":\"$id\",\"object\":\"invoice\",\"deleted\":true}")
+    if (!client.invoicesDelete(id, stripeParams(), mutation).invoice.deleted) return 130
+    stripePaymentsExpect("GET", "$path/$id/lines", list)
+    if (!client.invoiceLinesList(id).succeeded) return 131
+    0
+}
+
+fun checkRefunds(var client: StripeClient, mutation: StripeRequestOptions, list: string): int {
+    val path = "/v1/refunds"
+    val id = "re_1Pgc72B7WZ01zgkWqPvrRrPE"
+    val body = stripePaymentsFixture("refund")
+    stripePaymentsExpect("POST", path, body)
+    if (client.refundsCreate(stripeParams(), mutation).refund.amount != 100) return 141
+    stripePaymentsExpect("GET", "$path/$id", body)
+    if (client.refundsRetrieve(id).refund.id != id) return 142
+    stripePaymentsExpect("POST", "$path/$id", body)
+    if (!client.refundsUpdate(id, stripeParams(), mutation).succeeded) return 143
+    stripePaymentsExpect("GET", path, list)
+    if (!client.refundsList().succeeded) return 144
+    stripePaymentsExpect("POST", "$path/$id/cancel", body)
+    if (!client.refundsCancel(id, stripeParams(), mutation).succeeded) return 145
+    stripePaymentsExpect("GET", "$path/pyr_123", "{\"id\":\"pyr_123\",\"object\":\"refund\"}")
+    if (client.refundsRetrieve("pyr_123").refund.id != "pyr_123") return 146
+    0
+}
+
+fun checkDisputes(var client: StripeClient, mutation: StripeRequestOptions, list: string): int {
+    val path = "/v1/disputes"
+    val id = "dp_1Pgc71B7WZ01zgkWMevJiAUx"
+    val body = stripePaymentsFixture("dispute")
+    stripePaymentsExpect("GET", "$path/$id", body)
+    if (client.disputesRetrieve(id).dispute.amount != 1000) return 151
+    stripePaymentsExpect("POST", "$path/$id", body)
+    if (!client.disputesUpdate(id, stripeParams(), mutation).succeeded) return 152
+    stripePaymentsExpect("GET", path, list)
+    if (!client.disputesList().succeeded) return 153
+    stripePaymentsExpect("POST", "$path/$id/close", body)
+    if (!client.disputesClose(id, stripeParams(), mutation).succeeded) return 154
+    stripePaymentsExpect("GET", "$path/du_123", "{\"id\":\"du_123\",\"object\":\"dispute\"}")
+    if (client.disputesRetrieve("du_123").dispute.id != "du_123") return 155
+    0
+}
+
+fun checkBalanceTransactions(var client: StripeClient, list: string): int {
+    val path = "/v1/balance_transactions"
+    val id = "txn_1PgaxNB7WZ01zgkWEV3TLf40"
+    stripePaymentsExpect("GET", "$path/$id", stripePaymentsFixture("balance_transaction"))
+    if (client.balanceTransactionsRetrieve(id).balanceTransaction.net != 100) return 161
+    stripePaymentsExpect("GET", path, list)
+    if (!client.balanceTransactionsList().succeeded) return 162
+    // Filters reach the query string, and the page holds typed-parsable objects.
+    val filters = stripeParams()
+    filters.add("payout", "po_123")
+    stripePaymentsExpect("GET", "$path?payout=po_123",
+        "{\"object\":\"list\",\"has_more\":false,\"url\":\"$path\",\"data\":[" +
+        stripePaymentsFixture("balance_transaction") + "]}")
+    val page = client.balanceTransactionsList(filters)
+    if (page.page.data.size != 1 ||
+        stripeBalanceTransaction(page.page.data[0]).id != id) return 163
+    0
+}
+
+fun checkPayouts(var client: StripeClient, mutation: StripeRequestOptions, list: string): int {
+    val path = "/v1/payouts"
+    val id = "po_1Pgc79B7WZ01zgkWu1KToYf4"
+    val body = stripePaymentsFixture("payout")
+    stripePaymentsExpect("POST", path, body)
+    if (client.payoutsCreate(stripeParams(), mutation).payout.amount != 1100) return 171
+    stripePaymentsExpect("GET", "$path/$id", body)
+    if (client.payoutsRetrieve(id).payout.id != id) return 172
+    stripePaymentsExpect("POST", "$path/$id", body)
+    if (!client.payoutsUpdate(id, stripeParams(), mutation).succeeded) return 173
+    stripePaymentsExpect("GET", path, list)
+    if (!client.payoutsList().succeeded) return 174
+    stripePaymentsExpect("POST", "$path/$id/cancel", body)
+    if (!client.payoutsCancel(id, stripeParams(), mutation).succeeded) return 175
+    stripePaymentsExpect("POST", "$path/$id/reverse", body)
+    if (!client.payoutsReverse(id, stripeParams(), mutation).succeeded) return 176
+    0
+}
+
+// None of these may reach the transport.
+fun checkRejectedLocally(var client: StripeClient, mutation: StripeRequestOptions): int {
+    val none = stripeRequestOptions()
+    val before = stripePaymentsCalls
+    if (client.paymentIntentsCreate(stripeParams(), none).succeeded) return 181
+    if (client.paymentIntentsCapture("pi_123", stripeParams(), none).succeeded) return 182
+    if (client.paymentIntentsCapture("../pi_123", stripeParams(), mutation).succeeded) return 183
+    if (client.chargesCreate(stripeParams(), none).succeeded) return 184
+    if (client.invoicesVoid("in_123", stripeParams(), none).succeeded) return 185
+    if (client.invoicesDelete("in/123", stripeParams(), mutation).succeeded) return 186
+    if (client.invoiceLinesList("in/123").succeeded) return 187
+    if (client.refundsCreate(stripeParams(), none).succeeded) return 188
+    if (client.refundsRetrieve("re?x=1").succeeded) return 189
+    if (client.disputesClose("dp_123", stripeParams(), none).succeeded) return 190
+    if (client.balanceTransactionsRetrieve("").succeeded) return 191
+    val failed = client.payoutsCreate(stripeParams(), none)
+    if (failed.succeeded || failed.response.error.kind != "configuration_error") return 192
+    if (client.payoutsReverse("po_123", stripeParams(), none).succeeded) return 193
+    if (stripePaymentsCalls != before) return 194
+    0
+}
+
+fun checkResponses(var client: StripeClient): int {
+    // The wrong resource, or an ID of the wrong kind, isn't accepted.
+    stripePaymentsExpect("GET", "/v1/refunds/re_123", stripePaymentsFixture("charge"))
+    val wrong = client.refundsRetrieve("re_123")
+    if (wrong.succeeded || wrong.response.error.kind != "parse_error") return 201
+    stripePaymentsExpect("GET", "/v1/payouts/po_123",
+        "{\"id\":\"txn_123\",\"object\":\"payout\"}")
+    if (client.payoutsRetrieve("po_123").succeeded) return 202
+    stripePaymentsExpect("GET", "/v1/charges/ch_123", "{\"object\":\"charge\"}")
+    if (client.chargesRetrieve("ch_123").succeeded) return 203
+    // Stripe's errors stay intact.
+    stripePaymentsExpect("GET", "/v1/invoices/in_123", #$jsons {
+        "error": {"type": "invalid_request_error", "code": "resource_missing",
+            "message": "No such invoice: 'in_123'", "param": "invoice"}
+    })
+    stripePaymentsStatus = 404
+    val missing = client.invoicesRetrieve("in_123")
+    if (missing.succeeded || missing.response.status != 404 ||
+        missing.response.requestId != "req_payments" ||
+        missing.response.error.kind != "invalid_request_error" ||
+        missing.response.error.code != "resource_missing" ||
+        missing.invoice.id != "") return 204
+    0
+}
+
+fun main: int {
+    val config = StripeConfig(
+        "sk_test_payments_fixture", stripeDefaultApiVersion(), 30000, 0,
+        1048576, false, StripeAppInfo("", "", ""),
+        "127.0.0.1", 12111, true
+    )
+    val client = stripeClientWithTransport(
+        config, stripePaymentsTransport, stripePaymentsNoWait
+    )
+    val mutation = stripeIdempotentRequest("payments-fixture")
+    val list = #$jsons {
+        "object": "list", "data": [], "has_more": false, "url": "/v1/items"
+    }
+    var result = checkPaymentIntents(client, mutation, list)
+    if (result == 0) result = checkCharges(client, mutation, list)
+    if (result == 0) result = checkInvoices(client, mutation, list)
+    if (result == 0) result = checkRefunds(client, mutation, list)
+    if (result == 0) result = checkDisputes(client, mutation, list)
+    if (result == 0) result = checkBalanceTransactions(client, list)
+    if (result == 0) result = checkPayouts(client, mutation, list)
+    if (result == 0) result = checkRejectedLocally(client, mutation)
+    if (result == 0) result = checkResponses(client)
+    if (result == 0 && stripePaymentsMismatch) result = 210
+    result
+}

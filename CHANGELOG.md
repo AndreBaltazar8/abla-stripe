@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Added typed Payment Intents, Charges, Invoices, Refunds, Disputes, Balance
+  Transactions and Payouts, tested against Stripe's published examples for the
+  pinned API version.
+
 ## 0.1.0 - 2026-08-12
 
 - Added a version-pinned Stripe API v1 client for `2026-07-29.dahlia`.

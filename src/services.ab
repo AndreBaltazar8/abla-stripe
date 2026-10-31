@@ -49,6 +49,48 @@ class StripeListResult(
     val response: StripeResult
 )
 
+class StripePaymentIntentResult(
+    val succeeded: bool,
+    val paymentIntent: StripePaymentIntent,
+    val response: StripeResult
+)
+
+class StripeChargeResult(
+    val succeeded: bool,
+    val charge: StripeCharge,
+    val response: StripeResult
+)
+
+class StripeInvoiceResult(
+    val succeeded: bool,
+    val invoice: StripeInvoice,
+    val response: StripeResult
+)
+
+class StripeRefundResult(
+    val succeeded: bool,
+    val refund: StripeRefund,
+    val response: StripeResult
+)
+
+class StripeDisputeResult(
+    val succeeded: bool,
+    val dispute: StripeDispute,
+    val response: StripeResult
+)
+
+class StripeBalanceTransactionResult(
+    val succeeded: bool,
+    val balanceTransaction: StripeBalanceTransaction,
+    val response: StripeResult
+)
+
+class StripePayoutResult(
+    val succeeded: bool,
+    val payout: StripePayout,
+    val response: StripeResult
+)
+
 class StripeCollectionResult(
     val succeeded: bool,
     val data: array<Json>,
@@ -69,6 +111,13 @@ fun stripeEmptySubscription(): StripeSubscription =
     stripeSubscription(jsonObject([], []))
 fun stripeEmptyProduct(): StripeProduct = stripeProduct(jsonObject([], []))
 fun stripeEmptyPrice(): StripePrice = stripePrice(jsonObject([], []))
+fun stripeEmptyPaymentIntent(): StripePaymentIntent = stripePaymentIntent(jsonObject([], []))
+fun stripeEmptyCharge(): StripeCharge = stripeCharge(jsonObject([], []))
+fun stripeEmptyInvoice(): StripeInvoice = stripeInvoice(jsonObject([], []))
+fun stripeEmptyRefund(): StripeRefund = stripeRefund(jsonObject([], []))
+fun stripeEmptyDispute(): StripeDispute = stripeDispute(jsonObject([], []))
+fun stripeEmptyBalanceTransaction(): StripeBalanceTransaction = stripeBalanceTransaction(jsonObject([], []))
+fun stripeEmptyPayout(): StripePayout = stripePayout(jsonObject([], []))
 fun stripeEmptyList(): StripeList = stripeList(jsonObject([], []))
 
 fun stripeExpectedResponse(
@@ -177,6 +226,11 @@ fun stripeResourcePath(prefix: string, id: string): string {
         index = index + 1
     }
     if (valid) "$prefix/${stripePercentEncode(id)}" else ""
+}
+
+fun stripeResourceActionPath(prefix: string, id: string, action: string): string {
+    val path = stripeResourcePath(prefix, id)
+    if (path != "") "$path/$action" else ""
 }
 
 fun stripeMutationOptionsValid(options: StripeRequestOptions): bool =
@@ -455,4 +509,689 @@ fun StripeClient.eventsList(
         this.rawRequest("GET", "/v1/events", params, options), "list", ""
     )
     StripeListResult(result.succeeded, stripeList(result.value), result)
+}
+
+fun StripeClient.paymentIntentsCreate(
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripePaymentIntentResult {
+    if (!stripeMutationOptionsValid(options)) return StripePaymentIntentResult(
+        false, stripeEmptyPaymentIntent(), stripeFailure(
+            "configuration_error", "Payment Intent creation requires an idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", "/v1/payment_intents", params, options), "payment_intent", "pi_"
+    )
+    StripePaymentIntentResult(
+        result.succeeded, stripePaymentIntent(result.value), result
+    )
+}
+
+fun StripeClient.paymentIntentsRetrieve(
+    id: string,
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripePaymentIntentResult {
+    val path = stripeResourcePath("/v1/payment_intents", id)
+    if (path == "") return StripePaymentIntentResult(
+        false, stripeEmptyPaymentIntent(), stripeFailure(
+            "configuration_error", "Invalid Stripe Payment Intent identifier."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", path, params, options), "payment_intent", "pi_"
+    )
+    StripePaymentIntentResult(
+        result.succeeded, stripePaymentIntent(result.value), result
+    )
+}
+
+fun StripeClient.paymentIntentsUpdate(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripePaymentIntentResult {
+    val path = stripeResourcePath("/v1/payment_intents", id)
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripePaymentIntentResult(
+        false, stripeEmptyPaymentIntent(), stripeFailure(
+            "configuration_error", "Payment Intent update requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "payment_intent", "pi_"
+    )
+    StripePaymentIntentResult(
+        result.succeeded, stripePaymentIntent(result.value), result
+    )
+}
+
+fun StripeClient.paymentIntentsList(
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeListResult {
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", "/v1/payment_intents", params, options), "list", ""
+    )
+    StripeListResult(result.succeeded, stripeList(result.value), result)
+}
+
+fun StripeClient.paymentIntentsConfirm(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripePaymentIntentResult {
+    val path = stripeResourceActionPath("/v1/payment_intents", id, "confirm")
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripePaymentIntentResult(
+        false, stripeEmptyPaymentIntent(), stripeFailure(
+            "configuration_error", "Payment Intent confirm requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "payment_intent", "pi_"
+    )
+    StripePaymentIntentResult(
+        result.succeeded, stripePaymentIntent(result.value), result
+    )
+}
+
+fun StripeClient.paymentIntentsCapture(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripePaymentIntentResult {
+    val path = stripeResourceActionPath("/v1/payment_intents", id, "capture")
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripePaymentIntentResult(
+        false, stripeEmptyPaymentIntent(), stripeFailure(
+            "configuration_error", "Payment Intent capture requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "payment_intent", "pi_"
+    )
+    StripePaymentIntentResult(
+        result.succeeded, stripePaymentIntent(result.value), result
+    )
+}
+
+fun StripeClient.paymentIntentsCancel(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripePaymentIntentResult {
+    val path = stripeResourceActionPath("/v1/payment_intents", id, "cancel")
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripePaymentIntentResult(
+        false, stripeEmptyPaymentIntent(), stripeFailure(
+            "configuration_error", "Payment Intent cancel requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "payment_intent", "pi_"
+    )
+    StripePaymentIntentResult(
+        result.succeeded, stripePaymentIntent(result.value), result
+    )
+}
+
+fun StripeClient.chargesCreate(
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeChargeResult {
+    if (!stripeMutationOptionsValid(options)) return StripeChargeResult(
+        false, stripeEmptyCharge(), stripeFailure(
+            "configuration_error", "Charge creation requires an idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", "/v1/charges", params, options), "charge", ""
+    )
+    StripeChargeResult(
+        result.succeeded, stripeCharge(result.value), result
+    )
+}
+
+fun StripeClient.chargesRetrieve(
+    id: string,
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeChargeResult {
+    val path = stripeResourcePath("/v1/charges", id)
+    if (path == "") return StripeChargeResult(
+        false, stripeEmptyCharge(), stripeFailure(
+            "configuration_error", "Invalid Stripe Charge identifier."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", path, params, options), "charge", ""
+    )
+    StripeChargeResult(
+        result.succeeded, stripeCharge(result.value), result
+    )
+}
+
+fun StripeClient.chargesUpdate(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeChargeResult {
+    val path = stripeResourcePath("/v1/charges", id)
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripeChargeResult(
+        false, stripeEmptyCharge(), stripeFailure(
+            "configuration_error", "Charge update requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "charge", ""
+    )
+    StripeChargeResult(
+        result.succeeded, stripeCharge(result.value), result
+    )
+}
+
+fun StripeClient.chargesList(
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeListResult {
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", "/v1/charges", params, options), "list", ""
+    )
+    StripeListResult(result.succeeded, stripeList(result.value), result)
+}
+
+fun StripeClient.chargesCapture(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeChargeResult {
+    val path = stripeResourceActionPath("/v1/charges", id, "capture")
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripeChargeResult(
+        false, stripeEmptyCharge(), stripeFailure(
+            "configuration_error", "Charge capture requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "charge", ""
+    )
+    StripeChargeResult(
+        result.succeeded, stripeCharge(result.value), result
+    )
+}
+
+fun StripeClient.invoicesCreate(
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeInvoiceResult {
+    if (!stripeMutationOptionsValid(options)) return StripeInvoiceResult(
+        false, stripeEmptyInvoice(), stripeFailure(
+            "configuration_error", "Invoice creation requires an idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", "/v1/invoices", params, options), "invoice", "in_"
+    )
+    StripeInvoiceResult(
+        result.succeeded, stripeInvoice(result.value), result
+    )
+}
+
+fun StripeClient.invoicesRetrieve(
+    id: string,
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeInvoiceResult {
+    val path = stripeResourcePath("/v1/invoices", id)
+    if (path == "") return StripeInvoiceResult(
+        false, stripeEmptyInvoice(), stripeFailure(
+            "configuration_error", "Invalid Stripe Invoice identifier."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", path, params, options), "invoice", "in_"
+    )
+    StripeInvoiceResult(
+        result.succeeded, stripeInvoice(result.value), result
+    )
+}
+
+fun StripeClient.invoicesUpdate(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeInvoiceResult {
+    val path = stripeResourcePath("/v1/invoices", id)
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripeInvoiceResult(
+        false, stripeEmptyInvoice(), stripeFailure(
+            "configuration_error", "Invoice update requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "invoice", "in_"
+    )
+    StripeInvoiceResult(
+        result.succeeded, stripeInvoice(result.value), result
+    )
+}
+
+fun StripeClient.invoicesList(
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeListResult {
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", "/v1/invoices", params, options), "list", ""
+    )
+    StripeListResult(result.succeeded, stripeList(result.value), result)
+}
+
+fun StripeClient.invoicesDelete(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeInvoiceResult {
+    val path = stripeResourcePath("/v1/invoices", id)
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripeInvoiceResult(
+        false, stripeEmptyInvoice(), stripeFailure(
+            "configuration_error", "Invoice delete requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("DELETE", path, params, options), "invoice", "in_"
+    )
+    StripeInvoiceResult(
+        result.succeeded, stripeInvoice(result.value), result
+    )
+}
+
+fun StripeClient.invoicesFinalize(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeInvoiceResult {
+    val path = stripeResourceActionPath("/v1/invoices", id, "finalize")
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripeInvoiceResult(
+        false, stripeEmptyInvoice(), stripeFailure(
+            "configuration_error", "Invoice finalize requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "invoice", "in_"
+    )
+    StripeInvoiceResult(
+        result.succeeded, stripeInvoice(result.value), result
+    )
+}
+
+fun StripeClient.invoicesPay(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeInvoiceResult {
+    val path = stripeResourceActionPath("/v1/invoices", id, "pay")
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripeInvoiceResult(
+        false, stripeEmptyInvoice(), stripeFailure(
+            "configuration_error", "Invoice pay requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "invoice", "in_"
+    )
+    StripeInvoiceResult(
+        result.succeeded, stripeInvoice(result.value), result
+    )
+}
+
+fun StripeClient.invoicesSend(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeInvoiceResult {
+    val path = stripeResourceActionPath("/v1/invoices", id, "send")
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripeInvoiceResult(
+        false, stripeEmptyInvoice(), stripeFailure(
+            "configuration_error", "Invoice send requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "invoice", "in_"
+    )
+    StripeInvoiceResult(
+        result.succeeded, stripeInvoice(result.value), result
+    )
+}
+
+fun StripeClient.invoicesVoid(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeInvoiceResult {
+    val path = stripeResourceActionPath("/v1/invoices", id, "void")
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripeInvoiceResult(
+        false, stripeEmptyInvoice(), stripeFailure(
+            "configuration_error", "Invoice void requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "invoice", "in_"
+    )
+    StripeInvoiceResult(
+        result.succeeded, stripeInvoice(result.value), result
+    )
+}
+
+fun StripeClient.invoicesMarkUncollectible(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeInvoiceResult {
+    val path = stripeResourceActionPath("/v1/invoices", id, "mark_uncollectible")
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripeInvoiceResult(
+        false, stripeEmptyInvoice(), stripeFailure(
+            "configuration_error", "Invoice mark uncollectible requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "invoice", "in_"
+    )
+    StripeInvoiceResult(
+        result.succeeded, stripeInvoice(result.value), result
+    )
+}
+
+fun StripeClient.invoiceLinesList(
+    id: string,
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeListResult {
+    val path = stripeResourceActionPath("/v1/invoices", id, "lines")
+    if (path == "") return StripeListResult(
+        false, stripeEmptyList(), stripeFailure(
+            "configuration_error", "Invalid Stripe Invoice identifier."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", path, params, options), "list", ""
+    )
+    StripeListResult(result.succeeded, stripeList(result.value), result)
+}
+
+fun StripeClient.refundsCreate(
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeRefundResult {
+    if (!stripeMutationOptionsValid(options)) return StripeRefundResult(
+        false, stripeEmptyRefund(), stripeFailure(
+            "configuration_error", "Refund creation requires an idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", "/v1/refunds", params, options), "refund", ""
+    )
+    StripeRefundResult(
+        result.succeeded, stripeRefund(result.value), result
+    )
+}
+
+fun StripeClient.refundsRetrieve(
+    id: string,
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeRefundResult {
+    val path = stripeResourcePath("/v1/refunds", id)
+    if (path == "") return StripeRefundResult(
+        false, stripeEmptyRefund(), stripeFailure(
+            "configuration_error", "Invalid Stripe Refund identifier."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", path, params, options), "refund", ""
+    )
+    StripeRefundResult(
+        result.succeeded, stripeRefund(result.value), result
+    )
+}
+
+fun StripeClient.refundsUpdate(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeRefundResult {
+    val path = stripeResourcePath("/v1/refunds", id)
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripeRefundResult(
+        false, stripeEmptyRefund(), stripeFailure(
+            "configuration_error", "Refund update requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "refund", ""
+    )
+    StripeRefundResult(
+        result.succeeded, stripeRefund(result.value), result
+    )
+}
+
+fun StripeClient.refundsList(
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeListResult {
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", "/v1/refunds", params, options), "list", ""
+    )
+    StripeListResult(result.succeeded, stripeList(result.value), result)
+}
+
+fun StripeClient.refundsCancel(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeRefundResult {
+    val path = stripeResourceActionPath("/v1/refunds", id, "cancel")
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripeRefundResult(
+        false, stripeEmptyRefund(), stripeFailure(
+            "configuration_error", "Refund cancel requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "refund", ""
+    )
+    StripeRefundResult(
+        result.succeeded, stripeRefund(result.value), result
+    )
+}
+
+fun StripeClient.disputesRetrieve(
+    id: string,
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeDisputeResult {
+    val path = stripeResourcePath("/v1/disputes", id)
+    if (path == "") return StripeDisputeResult(
+        false, stripeEmptyDispute(), stripeFailure(
+            "configuration_error", "Invalid Stripe Dispute identifier."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", path, params, options), "dispute", ""
+    )
+    StripeDisputeResult(
+        result.succeeded, stripeDispute(result.value), result
+    )
+}
+
+fun StripeClient.disputesUpdate(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeDisputeResult {
+    val path = stripeResourcePath("/v1/disputes", id)
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripeDisputeResult(
+        false, stripeEmptyDispute(), stripeFailure(
+            "configuration_error", "Dispute update requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "dispute", ""
+    )
+    StripeDisputeResult(
+        result.succeeded, stripeDispute(result.value), result
+    )
+}
+
+fun StripeClient.disputesList(
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeListResult {
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", "/v1/disputes", params, options), "list", ""
+    )
+    StripeListResult(result.succeeded, stripeList(result.value), result)
+}
+
+fun StripeClient.disputesClose(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripeDisputeResult {
+    val path = stripeResourceActionPath("/v1/disputes", id, "close")
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripeDisputeResult(
+        false, stripeEmptyDispute(), stripeFailure(
+            "configuration_error", "Dispute close requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "dispute", ""
+    )
+    StripeDisputeResult(
+        result.succeeded, stripeDispute(result.value), result
+    )
+}
+
+fun StripeClient.balanceTransactionsRetrieve(
+    id: string,
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeBalanceTransactionResult {
+    val path = stripeResourcePath("/v1/balance_transactions", id)
+    if (path == "") return StripeBalanceTransactionResult(
+        false, stripeEmptyBalanceTransaction(), stripeFailure(
+            "configuration_error", "Invalid Stripe Balance Transaction identifier."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", path, params, options), "balance_transaction", "txn_"
+    )
+    StripeBalanceTransactionResult(
+        result.succeeded, stripeBalanceTransaction(result.value), result
+    )
+}
+
+fun StripeClient.balanceTransactionsList(
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeListResult {
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", "/v1/balance_transactions", params, options), "list", ""
+    )
+    StripeListResult(result.succeeded, stripeList(result.value), result)
+}
+
+fun StripeClient.payoutsCreate(
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripePayoutResult {
+    if (!stripeMutationOptionsValid(options)) return StripePayoutResult(
+        false, stripeEmptyPayout(), stripeFailure(
+            "configuration_error", "Payout creation requires an idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", "/v1/payouts", params, options), "payout", "po_"
+    )
+    StripePayoutResult(
+        result.succeeded, stripePayout(result.value), result
+    )
+}
+
+fun StripeClient.payoutsRetrieve(
+    id: string,
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripePayoutResult {
+    val path = stripeResourcePath("/v1/payouts", id)
+    if (path == "") return StripePayoutResult(
+        false, stripeEmptyPayout(), stripeFailure(
+            "configuration_error", "Invalid Stripe Payout identifier."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", path, params, options), "payout", "po_"
+    )
+    StripePayoutResult(
+        result.succeeded, stripePayout(result.value), result
+    )
+}
+
+fun StripeClient.payoutsUpdate(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripePayoutResult {
+    val path = stripeResourcePath("/v1/payouts", id)
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripePayoutResult(
+        false, stripeEmptyPayout(), stripeFailure(
+            "configuration_error", "Payout update requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "payout", "po_"
+    )
+    StripePayoutResult(
+        result.succeeded, stripePayout(result.value), result
+    )
+}
+
+fun StripeClient.payoutsList(
+    params: StripeParams = stripeParams(),
+    options: StripeRequestOptions = stripeRequestOptions()
+): StripeListResult {
+    val result = stripeExpectedResponse(
+        this.rawRequest("GET", "/v1/payouts", params, options), "list", ""
+    )
+    StripeListResult(result.succeeded, stripeList(result.value), result)
+}
+
+fun StripeClient.payoutsCancel(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripePayoutResult {
+    val path = stripeResourceActionPath("/v1/payouts", id, "cancel")
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripePayoutResult(
+        false, stripeEmptyPayout(), stripeFailure(
+            "configuration_error", "Payout cancel requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "payout", "po_"
+    )
+    StripePayoutResult(
+        result.succeeded, stripePayout(result.value), result
+    )
+}
+
+fun StripeClient.payoutsReverse(
+    id: string,
+    params: StripeParams,
+    options: StripeRequestOptions
+): StripePayoutResult {
+    val path = stripeResourceActionPath("/v1/payouts", id, "reverse")
+    if (path == "" || !stripeMutationOptionsValid(options)) return StripePayoutResult(
+        false, stripeEmptyPayout(), stripeFailure(
+            "configuration_error", "Payout reverse requires a valid ID and idempotency key."
+        )
+    )
+    val result = stripeExpectedResponse(
+        this.rawRequest("POST", path, params, options), "payout", "po_"
+    )
+    StripePayoutResult(
+        result.succeeded, stripePayout(result.value), result
+    )
 }
