@@ -18,6 +18,7 @@ check:
 	$(COMPILER) build tests/resources_test.ab -o build/resources-test --fast --no-cache
 	$(COMPILER) build tests/payments_resources_test.ab -o build/payments-resources-test --fast --no-cache
 	$(COMPILER) build tests/payments_services_test.ab -o build/payments-services-test --fast --no-cache
+	$(COMPILER) build tests/oauth_test.ab -o build/oauth-test --fast --no-cache
 	$(COMPILER) build tests/config_test.ab -o build/config-test --fast --no-cache
 	$(COMPILER) build tests/integration_test.ab -o build/integration-test --fast --no-cache
 	build/form-test
@@ -27,6 +28,7 @@ check:
 	build/pagination-test
 	build/client-test
 	build/safety-test
+	build/oauth-test
 	build/resources-test
 	build/payments-resources-test
 	build/payments-services-test

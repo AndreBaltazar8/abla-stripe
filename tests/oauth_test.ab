@@ -1,0 +1,25 @@
+import "../src/stripe.ab"
+var mode: int = 0
+var authorization: string = ""
+fun exchange(request: HttpRequest, maximum: int, timeout: int): HttpClientResult {
+    authorization = request.header("Authorization")
+    if (mode == 1) return HttpClientResult(HttpResponse(400,[],"{\"error\":{\"type\":\"invalid_request_error\",\"message\":\"opaque.access-token_123\"}}"),true,true)
+    HttpClientResult(HttpResponse(200,[],"{}"),true,true)
+}
+fun config(token: string): StripeConfig = StripeConfig(token,stripeDefaultApiVersion(),1000,0,32768,false,StripeAppInfo("test","1",""),"127.0.0.1",1,true)
+fun main: int {
+    val opaque = "opaque.access-token_123"
+    if (config(opaque).valid()) return 1
+    val oauth = stripeOAuthClient(config(opaque))
+    if (!oauth.config.valid() || oauth.config.secretKey != opaque) return 2
+    val client = stripeClientWithTransport(oauth.config,exchange,{ milliseconds: int -> return })
+    if (!client.rawRequest("GET","/v1/account",stripeParams()).succeeded || authorization != "Bearer $opaque") return 3
+    mode = 1
+    val refused = client.rawRequest("GET","/v1/account",stripeParams())
+    if (refused.succeeded || refused.error.message.contains(opaque) || refused.body.contains(opaque)) return 4
+    for (bad in ["", "a b", "a\r\nX: y", "á"]) if (stripeOAuthConfiguration(config(bad)).valid()) return 5
+    if (!config("sk_test_example").valid() || !config("rk_test_example").valid()) return 6
+    val local = stripeOAuthLoopbackTestClient(config(opaque))
+    if (!local.config.valid() || !local.config.testMode || local.config.host != "127.0.0.1") return 7
+    0
+}

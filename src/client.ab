@@ -43,7 +43,8 @@ class StripeConfig(
     val appInfo: StripeAppInfo,
     val host: string,
     val port: int,
-    val testMode: bool
+    val testMode: bool,
+    val authentication: string = "api_key"
 )
 
 fun stripeConfig(secretKey: string): StripeConfig = StripeConfig(
@@ -107,11 +108,17 @@ fun stripeHeaderValueValid(value: string, emptyAllowed: bool): bool {
     valid
 }
 
+// OAuth bearer tokens have no API-key prefix contract (Stripe Apps /v1/oauth/token).
+fun stripeOAuthTokenValid(token: string): bool {
+    if (token.size == 0 || token.size > 8192) return false
+    for (c in token) if (!((c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 45 || c == 46 || c == 95 || c == 126 || c == 43 || c == 47 || c == 61)) return false
+    true
+}
 fun StripeConfig.valid(): bool =
-    (this.secretKey.size >= 8 &&
-        (this.secretKey.slice(0, 3) == "sk_" ||
-         this.secretKey.slice(0, 3) == "rk_") &&
-        stripeHeaderValueValid(this.secretKey, false)) &&
+    ((this.authentication == "api_key" && this.secretKey.size >= 8 &&
+        (this.secretKey.slice(0, 3) == "sk_" || this.secretKey.slice(0, 3) == "rk_") &&
+        stripeHeaderValueValid(this.secretKey, false)) ||
+     (this.authentication == "oauth" && stripeOAuthTokenValid(this.secretKey))) &&
     this.apiVersion.size >= 10 &&
     stripeHeaderValueValid(this.apiVersion, false) &&
     stripeHeaderValueValid(this.appInfo.name, true) &&
@@ -313,6 +320,15 @@ fun stripeClient(config: StripeConfig): StripeClient = StripeClient(
     "", 0
 )
 
+// Explicit opt-in: the supplied secretKey is an OAuth access token. Normal clients still require API-key prefixes.
+fun stripeOAuthConfiguration(config: StripeConfig): StripeConfig = StripeConfig(
+    config.secretKey, config.apiVersion, config.timeoutMilliseconds,
+    config.maximumNetworkRetries, config.maximumResponseBytes, config.telemetry,
+    config.appInfo, config.host, config.port, config.testMode, "oauth"
+)
+fun stripeOAuthClient(config: StripeConfig): StripeClient = stripeClient(stripeOAuthConfiguration(config))
+fun stripeOAuthLoopbackTestClient(config: StripeConfig): StripeClient = stripeLoopbackTestClient(stripeOAuthConfiguration(config))
+
 fun stripeClientWithTransport(
     config: StripeConfig,
     transport: (HttpRequest, int, int) -> HttpClientResult,
@@ -432,6 +448,12 @@ fun StripeClient.rawRequest(
         0, "", options.idempotencyKey, retries, retrying
     )
 
+    // OAuth error objects can be logged by callers; never return an echoed bearer token in them.
+    if (this.config.authentication == "oauth" && response.response.status >= 300) {
+        val safeHeaders: array<HttpHeader> = []
+        for (h in response.response.headers) safeHeaders.append(HttpHeader(h.name,h.value.replace(this.config.secretKey,"[redacted]")))
+        response = HttpClientResult(HttpResponse(response.response.status,safeHeaders,response.response.body.replace(this.config.secretKey,"[redacted]")),true,true)
+    }
     val status = response.response.status
     val requestId = completedRequestId
     val responseVersion = response.response.header("Stripe-Version")

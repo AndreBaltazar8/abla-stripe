@@ -305,3 +305,14 @@ acceptance contract and roadmap.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## OAuth access tokens
+
+Use `stripeOAuthClient(config)` for a Stripe Apps OAuth access token in
+`config.secretKey`. Tokens are validated as bearer-token text without assuming
+an `sk_` or `rk_` prefix. The regular `stripeClient` retains API-key validation.
+The HTTP Authorization header and error redaction use the exact access token.
+`stripeOAuthLoopbackTestClient(config)` keeps the existing loopback-only fixture
+restrictions; production OAuth requests use verified TLS. Applications must
+store refresh tokens securely and determine the grant's live/test mode from the
+OAuth response, not the access token's prefix.
