@@ -1,4 +1,8 @@
 import "../src/stripe.ab"
+import "abla/http"
+import "../src/client.ab"
+import "../src/form.ab"
+import "../src/services.ab"
 
 var stripeTestAttempts: int = 0
 var stripeTestPath: string = ""

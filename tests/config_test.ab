@@ -1,4 +1,5 @@
 import "../src/stripe.ab"
+import "../src/client.ab"
 
 fun main: int {
     val expected = stripeEnvironment("STRIPE_CONFIG_EXPECTED_KEY", "")

@@ -1,4 +1,8 @@
 import "../src/stripe.ab"
+import "abla/http"
+import "../src/services.ab"
+import "../src/client.ab"
+import "../src/form.ab"
 
 var stripeTypedExpectedMethod: string = ""
 var stripeTypedExpectedPath: string = ""

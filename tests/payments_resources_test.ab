@@ -1,5 +1,7 @@
 import "abla/sys/linux"
 import "../src/stripe.ab"
+import "../src/resources.ab"
+import "abla/json"
 
 // Fixtures are read relative to the repository root, where the Makefile runs tests.
 fun stripeFixture(name: string): Json =

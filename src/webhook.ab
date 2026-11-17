@@ -1,6 +1,7 @@
 import "abla/crypto"
 import "abla/json"
 import "resources.ab"
+import "./client.ab"
 
 class StripeSignatureHeader(
     val timestamps: array<int>,

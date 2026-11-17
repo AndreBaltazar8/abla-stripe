@@ -1,4 +1,9 @@
 import "../src/stripe.ab"
+import "../src/form.ab"
+import "../src/client.ab"
+import "abla/http"
+import "abla/text"
+import "abla/json"
 
 var stripeSafetyMode: int = 0
 var stripeSafetyAttempts: int = 0

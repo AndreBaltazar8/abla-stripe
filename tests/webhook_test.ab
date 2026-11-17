@@ -1,4 +1,5 @@
 import "../src/stripe.ab"
+import "../src/webhook.ab"
 
 fun main: int {
     val secret = "whsec_test_secret"

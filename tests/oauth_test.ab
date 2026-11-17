@@ -1,4 +1,8 @@
 import "../src/stripe.ab"
+import "../src/client.ab"
+import "../src/form.ab"
+import "abla/text"
+import "abla/http"
 var mode: int = 0
 var authorization: string = ""
 fun exchange(request: HttpRequest, maximum: int, timeout: int): HttpClientResult {

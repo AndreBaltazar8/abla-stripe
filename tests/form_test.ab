@@ -1,5 +1,6 @@
 import "../src/stripe.ab"
 import "abla/bytes"
+import "../src/form.ab"
 
 fun main: int {
     val params = stripeParams()

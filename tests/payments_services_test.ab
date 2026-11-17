@@ -1,5 +1,10 @@
 import "abla/sys/linux"
 import "../src/stripe.ab"
+import "../src/services.ab"
+import "abla/http"
+import "../src/resources.ab"
+import "../src/client.ab"
+import "../src/form.ab"
 
 var stripePaymentsExpectedMethod: string = ""
 var stripePaymentsExpectedPath: string = ""

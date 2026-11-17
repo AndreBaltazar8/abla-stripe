@@ -1,4 +1,6 @@
 import "../src/stripe.ab"
+import "abla/json"
+import "../src/resources.ab"
 
 fun main: int {
     val subscriptionJson = jsonParse(#$jsons {
