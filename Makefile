@@ -6,7 +6,6 @@ COMPILER ?= $(ABLAC_DIR)/build/ablac
 check:
 	mkdir -p build
 	bash -n tools/test-stripe.sh
-	python3 -m py_compile tools/stripe_mock.py
 	$(COMPILER) build tests/compile_test.ab -o build/compile-test --fast --no-cache
 	$(COMPILER) build tests/form_test.ab -o build/form-test --fast --no-cache
 	$(COMPILER) build tests/webhook_test.ab -o build/webhook-test --fast --no-cache
@@ -43,7 +42,7 @@ check:
 		STRIPE_ENABLE_TELEMETRY=true build/config-test
 
 test: check
-	./tools/test-stripe.sh
+	COMPILER=$(COMPILER) ./tools/test-stripe.sh
 
 clean:
 	rm -rf build

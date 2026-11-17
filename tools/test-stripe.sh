@@ -17,7 +17,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-python3 tools/stripe_mock.py >"$fixture_dir/port" 2>"$fixture_dir/error" &
+"${COMPILER:-ablac}" build tools/stripe_mock.ab -o "$fixture_dir/stripe-mock" --fast --no-cache >"$fixture_dir/build.log" 2>&1 || { cat "$fixture_dir/build.log" >&2; exit 1; }
+"$fixture_dir/stripe-mock" >"$fixture_dir/port" 2>"$fixture_dir/error" &
 fixture_pid=$!
 
 for _ in $(seq 1 100); do

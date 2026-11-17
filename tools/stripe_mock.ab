@@ -1,0 +1,85 @@
+// A fixture server for tests/integration_test.ab: it serves exactly two requests on a loopback port it prints on its first
+// line of standard output. POST /v1/customers must carry the body, headers and client information the library is
+// meant to send (a mismatch is named on standard error and answered with a 400); GET /v1/fail is answered with a rate
+// limit error, and anything else with a 404.
+import "abla/http"
+import "abla/io"
+import "abla/json"
+import "abla/sys/linux/io"
+
+val requestsToServe = 2
+
+fun mockResponse(status: int, body: string, requestId: string, extra: array<HttpHeader>): HttpResponse {
+    val headers: array<HttpHeader> = [
+        HttpHeader("Content-Type", "application/json"),
+        HttpHeader("Connection", "close"),
+        HttpHeader("Request-Id", requestId)
+    ]
+    for (header in extra) headers.append(header)
+    HttpResponse(status, headers, body)
+}
+
+fun mockFailed(names: array<string>): void {
+    var joined = ""
+    for (name in names) joined = joined + (if (joined == "") "" else ", ") + name
+    linuxPrintStandardError("Stripe fixture mismatch: $joined\n")
+    return
+}
+
+// X-Stripe-Client-User-Agent is JSON the library writes; compared as a value, not as text.
+fun clientInformationIsRight(text: string): bool {
+    val parsed = jsonParse(if (text == "") "{}" else text)
+    if (!parsed.succeeded) return false
+    val value = parsed.value
+    val application = value.get("application")
+    value.size() == 5 && value.getString("lang") == "abla" && value.getString("publisher") == "community" &&
+        value.getString("bindings_version") == "0.1.0" && value.getString("lang_version") == "0.1" &&
+        application.isObject() && application.size() == 3 && application.getString("name") == "integration-test" &&
+        application.getString("version") == "0.1.0" && application.getString("url") == "https://example.test"
+}
+
+fun handlePost(request: HttpRequest): HttpResponse {
+    val checks: array<string> = []
+    if (request.path != "/v1/customers" || request.query != "") checks.append("path")
+    if (request.body != "email=andr%C3%A9%40example.com&metadata%5Baccount_id%5D=acc_123") checks.append("body")
+    if (request.header("Authorization") != "Bearer sk_test_protocol_fixture") checks.append("authorization")
+    if (request.header("Stripe-Version") != "2026-07-29.dahlia") checks.append("api_version")
+    if (request.header("Idempotency-Key") != "fixture-customer-1") checks.append("idempotency")
+    if (request.header("User-Agent") != "abla-stripe/0.1.0") checks.append("user_agent")
+    if (!clientInformationIsRight(request.header("X-Stripe-Client-User-Agent"))) checks.append("client_information")
+    if (request.header("X-Abla-Stripe-App") != "integration-test/0.1.0") checks.append("application")
+    if (checks.size > 0) {
+        mockFailed(checks)
+        return mockResponse(400, "{\"error\":{\"type\":\"invalid_request_error\",\"message\":\"fixture mismatch\"}}",
+            "req_fixture_mismatch", [])
+    }
+    mockResponse(200,
+        "{\"id\":\"cus_fixture\",\"object\":\"customer\",\"email\":\"andré@example.com\",\"name\":\"André\",\"livemode\":false,\"metadata\":{\"account_id\":\"acc_123\"}}",
+        "req_fixture_customer", [HttpHeader("Stripe-Version", "2026-07-29.dahlia")])
+}
+
+fun handleGet(request: HttpRequest): HttpResponse {
+    if (request.path + (if (request.query == "") "" else "?" + request.query) != "/v1/fail") {
+        return mockResponse(404, "{\"error\":{\"type\":\"invalid_request_error\",\"message\":\"not found\"}}",
+            "req_fixture_not_found", [])
+    }
+    mockResponse(429,
+        "{\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Too many requests\",\"code\":\"rate_limit\"}}",
+        "req_fixture_failure", [HttpHeader("Stripe-Rate-Limited-Reason", "global-rate"), HttpHeader("Stripe-Should-Retry", "false")])
+}
+
+fun main: int {
+    val listener = tcpListen(0)
+    println("${listener.localPort()}")
+    var served = 0
+    while (served < requestsToServe) {
+        val connection = listener.accept()
+        val request = httpParseRequest(httpReadRequest(connection))
+        val response = if (request.method == "POST") handlePost(request) else handleGet(request)
+        connection.write(response.render())
+        connection.close()
+        served = served + 1
+    }
+    listener.close()
+    0
+}
