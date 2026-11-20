@@ -1,3 +1,2 @@
-import "../src/stripe.ab"
 
 fun main: int = 0
